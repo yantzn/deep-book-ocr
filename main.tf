@@ -9,11 +9,6 @@ terraform {
       version = "~> 2.4"
     }
   }
-  # 初回のみコメントアウトしてローカル実行し、バケット作成後に有効化
-  /*backend "gcs" {
-    bucket = "deep-book-ocr-tfstate"
-    prefix = "terraform/state"
-  }*/
 }
 
 provider "google" {
@@ -29,14 +24,32 @@ resource "google_storage_bucket" "buckets" {
   force_destroy = true
 }
 
-# --- 2. Document AI プロセッサ ---
+# --- 2. 権限設定 (Code 7 の修正) ---
+# Storage専用サービスアカウントを取得
+data "google_storage_project_service_account" "gcs_account" {}
+
+# StorageにPub/Subへの通知権限を与える
+resource "google_project_iam_member" "gcs_pubsub_publishing" {
+  project = var.project_id
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+}
+
+# --- 3. Artifact Registry (Code 13 の修正) ---
+resource "google_artifact_registry_repository" "gcf_artifacts" {
+  location      = var.region
+  repository_id = "gcf-artifacts"
+  format        = "DOCKER"
+}
+
+# --- 4. Document AI プロセッサ ---
 resource "google_document_ai_processor" "ocr_processor" {
   location     = "us"
   display_name = "book-ocr-processor"
   type         = "OCR_PROCESSOR"
 }
 
-# --- 3. ソースコードのアーカイブ (ZIP化) ---
+# --- 5. アーカイブとアップロード ---
 data "archive_file" "ocr_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/functions/ocr_trigger"
@@ -49,7 +62,6 @@ data "archive_file" "md_generator_zip" {
   output_path = "${path.module}/files/md_generator.zip"
 }
 
-# ZIPをバケットへアップロード
 resource "google_storage_bucket_object" "ocr_trigger_code" {
   name   = "ocr_trigger.${data.archive_file.ocr_trigger_zip.output_md5}.zip"
   bucket = google_storage_bucket.buckets["source"].name
@@ -62,9 +74,8 @@ resource "google_storage_bucket_object" "md_generator_code" {
   source = data.archive_file.md_generator_zip.output_path
 }
 
-# --- 4. Cloud Functions (第2世代) ---
+# --- 6. Cloud Functions (第2世代) ---
 
-# Function 1: OCR Trigger
 resource "google_cloudfunctions2_function" "ocr_trigger" {
   name     = "ocr-trigger"
   location = var.region
@@ -94,15 +105,18 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     trigger_region = var.region
     event_type     = "google.cloud.storage.object.v1.finalized"
     retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
-
     event_filters {
       attribute = "bucket"
       value     = google_storage_bucket.buckets["input"].name
     }
   }
+
+  depends_on = [
+    google_project_iam_member.gcs_pubsub_publishing,
+    google_artifact_registry_repository.gcf_artifacts
+  ]
 }
 
-# Function 2: Markdown Generator
 resource "google_cloudfunctions2_function" "md_generator" {
   name     = "md-generator"
   location = var.region
@@ -132,17 +146,19 @@ resource "google_cloudfunctions2_function" "md_generator" {
     trigger_region = var.region
     event_type     = "google.cloud.storage.object.v1.finalized"
     retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
-
     event_filters {
       attribute = "bucket"
       value     = google_storage_bucket.buckets["temp"].name
     }
   }
+
+  depends_on = [
+    google_project_iam_member.gcs_pubsub_publishing,
+    google_artifact_registry_repository.gcf_artifacts
+  ]
 }
 
-# --- 5. Workload Identity (GitHub Actions認証) ---
-
-# プール自体の定義（OIDCプロバイダ含む）
+# --- 7. Workload Identity (GitHub Actions認証) ---
 resource "google_iam_workload_identity_pool" "pool" {
   workload_identity_pool_id = "github-actions-pool"
   display_name              = "GitHub Actions Pool"
@@ -158,16 +174,14 @@ resource "google_iam_workload_identity_pool_provider" "provider" {
     "attribute.repository_owner" = "assertion.repository_owner"
   }
 
-  # ここを追加：特定のリポジトリ（あなた自身のもの）からのアクセスのみを許可する
-  # 「あなたのGitHubユーザー名/リポジトリ名」に書き換えてください
-  attribute_condition = "assertion.repository == 'あなたのGitHubユーザー名/deep-book-ocr'"
+  # リポジトリ名は「あなたのユーザー名/リポジトリ名」に書き換えてください
+  attribute_condition = "assertion.repository == 'yantzn/deep-book-ocr'"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
 }
 
-# サービスアカウントと権限
 resource "google_service_account" "github_sa" {
   account_id   = "github-actions-sa"
   display_name = "GitHub Actions Service Account"
