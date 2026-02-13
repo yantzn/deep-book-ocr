@@ -30,5 +30,9 @@ jobs:
     - name: Terraform Init
       run: terraform init
 
+    # 追加：プロバイダーバイナリに実行権限を付与
+    - name: Fix Provider Permissions
+      run: chmod -R +x .terraform/providers/
+
     - name: Terraform Apply
       run: terraform apply -auto-approve
