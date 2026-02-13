@@ -1,0 +1,34 @@
+name: 'Terraform deployment'
+
+on:
+  push:
+    branches: [ "main" ] # mainブランクにpushしたら発動
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # ここが非常に重要（OIDC認証に必要）
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # 1. Google Cloud への認証 (パスワード不要方式)
+    - id: 'auth'
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+    # 2. Terraform のセットアップ
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    # 3. インフラのデプロイ
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve

@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached # ローカルのソースコードを同期
+    # コンテナがすぐに終了しないようにする設定
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    environment:
+      - GCP_PROJECT_ID=deep-book-ocr
