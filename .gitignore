@@ -1,34 +1,56 @@
+# ========================
 # Terraform
+# ========================
+
 .terraform/
 *.tfstate
 *.tfstate.*
 crash.log
 *.tfplan
-*.tfvars
+
+# tfvars は通常除外だが、このプロジェクトでは terraform.tfvars は含める
 *.tfvars.json
 .override.tf
 .override.tf.json
 
-# Generated function archives
+# 除外を解除（重要）
+!terraform.tfvars
+
+# ========================
+# Generated files
+# ========================
+
 files/*.zip
 
+# ========================
 # Python
+# ========================
+
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 env/
 
+# ========================
 # VSCode / DevContainer
+# ========================
+
 .vscode/
 .history/
 
+# ========================
 # OS / Logs
+# ========================
+
 .DS_Store
 Thumbs.db
 *.log
 
-# Credentials (念のため)
+# ========================
+# Credentials
+# ========================
+
 application_default_credentials.json
 *.pem
 *.key
