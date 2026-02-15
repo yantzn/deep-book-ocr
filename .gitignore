@@ -4,7 +4,6 @@
 *.tfstate.*
 crash.log
 *.tfplan
-terraform.tfvars
 *.tfvars
 *.tfvars.json
 .override.tf
