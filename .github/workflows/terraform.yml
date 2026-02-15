@@ -52,6 +52,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
+      # -----------------------
+      # Bootstrap (plan only)
+      # -----------------------
       - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
@@ -60,8 +63,11 @@ jobs:
 
       - name: Plan (bootstrap)
         working-directory: bootstrap
-        run: terraform plan -var-file=../terraform.tfvars
+        run: terraform plan -var-file=terraform.tfvars
 
+      # -----------------------
+      # Infra (plan)
+      # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
@@ -74,7 +80,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=../terraform.tfvars
+        run: terraform plan -var-file=terraform.tfvars
 
   terraform-apply:
     name: Terraform Apply (main)
@@ -122,7 +128,7 @@ jobs:
 
       - name: Apply (bootstrap)
         working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=../terraform.tfvars
+        run: terraform apply -auto-approve -var-file=terraform.tfvars
 
       # -----------------------
       # Infra (plan + apply)
@@ -135,7 +141,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
+        run: terraform plan -var-file=terraform.tfvars -out=tfplan
 
       - name: Apply (infra)
         working-directory: infra
