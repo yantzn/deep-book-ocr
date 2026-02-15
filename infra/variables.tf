@@ -14,8 +14,3 @@ variable "github_repository" {
   type        = string
   default     = "yantzn/deep-book-ocr"
 }
-
-variable "tfstate_bucket" {
-  description = "GCS bucket name for Terraform backend (already created)"
-  type        = string
-}
