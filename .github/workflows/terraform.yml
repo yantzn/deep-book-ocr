@@ -17,9 +17,10 @@ env:
   TF_PLUGIN_CACHE_DIR: /tmp/tf-plugin-cache
 
 jobs:
-  plan:
-    name: Terraform Plan (bootstrap + infra)
+  terraform-plan:
+    name: Terraform Plan (PR)
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
       id-token: write
@@ -52,35 +53,21 @@ jobs:
             ${{ runner.os }}-tf-plugins-
 
       # -----------------------
-      # Bootstrap
+      # Bootstrap (plan only)
       # -----------------------
-      - name: Show tfvars (bootstrap)
-        working-directory: bootstrap
-        run: |
-          ls -la terraform.tfvars
-          echo "--- bootstrap/terraform.tfvars ---"
-          cat terraform.tfvars
-
       - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
           rm -rf .terraform
           terraform init -reconfigure
 
-      - name: Apply (bootstrap) - enable APIs
+      - name: Plan (bootstrap)
         working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=terraform.tfvars
+        run: terraform plan -var-file=../terraform.tfvars
 
       # -----------------------
       # Infra (plan)
       # -----------------------
-      - name: Show tfvars (infra)
-        working-directory: infra
-        run: |
-          ls -la terraform.tfvars
-          echo "--- infra/terraform.tfvars ---"
-          cat terraform.tfvars
-
       - name: Init (infra)
         working-directory: infra
         run: |
@@ -93,7 +80,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=terraform.tfvars -out=tfplan
+        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
 
       - name: Upload tfplan artifact
         uses: actions/upload-artifact@v4
@@ -103,9 +90,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  apply:
+  terraform-apply:
     name: Terraform Apply (main)
-    needs: plan
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
@@ -156,7 +142,7 @@ jobs:
 
       - name: Apply (bootstrap)
         working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=terraform.tfvars
+        run: terraform apply -auto-approve -var-file=../terraform.tfvars
 
       # -----------------------
       # Infra (apply)

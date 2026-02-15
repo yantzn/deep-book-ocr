@@ -148,9 +148,9 @@ resource "google_cloudfunctions2_function" "md_generator" {
 # --- 7. Workload Identity Federation (GitHub Actions) ---
 resource "google_iam_workload_identity_pool" "pool" {
   workload_identity_pool_id = "github-actions-pool-v2"
+  display_name              = "GitHub Actions Pool-v2"
 
-  display_name = "GitHub Actions Pool-v2"
-
+  # display_nameの微修正で「update権限が要る」問題を避ける
   lifecycle {
     ignore_changes = [display_name]
   }
@@ -180,12 +180,14 @@ resource "google_service_account" "github_sa" {
   display_name = "GitHub Actions Service Account"
 }
 
+# まずは安定優先（後で最小化）
 resource "google_project_iam_member" "github_sa_editor" {
   project = var.project_id
   role    = "roles/editor"
   member  = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+# WIFをTerraformで触るため（create/update/…）
 resource "google_project_iam_member" "github_sa_wif_admin" {
   project = var.project_id
   role    = "roles/iam.workloadIdentityPoolAdmin"
