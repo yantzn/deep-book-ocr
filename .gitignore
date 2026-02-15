@@ -1,0 +1,90 @@
+# ===============================
+# Terraform
+# ===============================
+
+# Terraform state（絶対にコミットしない）
+*.tfstate
+*.tfstate.*
+crash.log
+
+# ローカル state ファイル
+terraform.tfstate
+terraform.tfstate.backup
+
+# Terraform キャッシュ
+.terraform/
+
+# Terraform プラン
+*.tfplan
+
+# Terraform 変数（環境依存・秘密情報の可能性）
+terraform.tfvars
+*.tfvars
+*.tfvars.json
+
+# lockは基本コミット推奨だが、削除運用なら無視
+# .terraform.lock.hcl
+
+# ===============================
+# Terraform build artifacts
+# ===============================
+
+# zip生成物（functions のアーカイブ）
+files/*.zip
+
+# ===============================
+# GCP 認証情報
+# ===============================
+
+# サービスアカウントキー等
+*.json
+!package.json
+!package-lock.json
+
+# ADC credentials
+application_default_credentials.json
+
+# ===============================
+# Python (Cloud Functions)
+# ===============================
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# テスト・キャッシュ
+.pytest_cache/
+.mypy_cache/
+
+# ===============================
+# Docker / DevContainer
+# ===============================
+
+.docker/
+docker-compose.override.yml
+
+# ===============================
+# VSCode / Codespaces
+# ===============================
+
+.vscode/
+.history/
+
+# ===============================
+# OS
+# ===============================
+
+.DS_Store
+Thumbs.db
+
+# ===============================
+# Logs
+# ===============================
+
+*.log
