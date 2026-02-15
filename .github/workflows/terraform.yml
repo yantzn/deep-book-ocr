@@ -56,6 +56,12 @@ jobs:
           rm -rf .terraform
           terraform init -reconfigure
 
+      # Bootstrap: 先に API を有効化（refreshしないのが超重要）
+      # - Cloud Resource Manager API が無効だと、google_project_iam_member の refresh/plan が落ちる
+      - name: Bootstrap required APIs (Terraform-only)
+        run: |
+          terraform apply -auto-approve -refresh=false -target=google_project_service.required
+
       - name: Terraform Validate
         run: terraform validate
 
@@ -116,6 +122,11 @@ jobs:
         run: |
           rm -rf .terraform
           terraform init -reconfigure
+
+      # Apply側でも念のため bootstrap（初回以降は即no-op）
+      - name: Bootstrap required APIs (Terraform-only)
+        run: |
+          terraform apply -auto-approve -refresh=false -target=google_project_service.required
 
       - name: Terraform Apply
         run: terraform apply -auto-approve tfplan
