@@ -1,9 +1,9 @@
-name: Terraform CI/CD
+name: Terraform CI/CD (bootstrap -> infra)
 
 on:
-  push:
-    branches: ["main"]
   pull_request:
+    branches: ["main"]
+  push:
     branches: ["main"]
   workflow_dispatch:
 
@@ -34,7 +34,7 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
-          access_token_lifetime: 300s
+          access_token_lifetime: 600s
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -50,7 +50,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      # --- Bootstrap (enable APIs) ---
+      # -----------------------------
+      # Bootstrap (enable required APIs)
+      # -----------------------------
       - name: Terraform Init (bootstrap)
         working-directory: bootstrap
         run: |
@@ -61,7 +63,9 @@ jobs:
         working-directory: bootstrap
         run: terraform apply -auto-approve -var-file=../terraform.tfvars
 
-      # --- Infra ---
+      # -----------------------------
+      # Infra (plan always, apply only on main push / workflow_dispatch)
+      # -----------------------------
       - name: Terraform Init (infra)
         working-directory: infra
         run: |
@@ -75,6 +79,14 @@ jobs:
       - name: Terraform Plan (infra)
         working-directory: infra
         run: terraform plan -var-file=../terraform.tfvars -out=tfplan
+
+      - name: Upload tfplan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/tfplan
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Terraform Apply (infra)
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
