@@ -1,10 +1,3 @@
-terraform {
-  backend "gcs" {
-    bucket = "deep-book-ocr-tfstate"
-    prefix = "infra"
-  }
-}
-
 provider "google" {
   project = var.project_id
   region  = var.region
