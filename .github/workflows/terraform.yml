@@ -1,4 +1,4 @@
-name: Terraform CI/CD (bootstrap -> infra)
+name: Terraform CI/CD (bootstrap + infra)
 
 on:
   pull_request:
@@ -17,7 +17,8 @@ env:
   TF_PLUGIN_CACHE_DIR: /tmp/tf-plugin-cache
 
 jobs:
-  terraform:
+  plan:
+    name: Plan (bootstrap -> infra)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,6 +27,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # 任意：tfvarsが無い場合にすぐ分かるように表示
+      - name: Show tfvars
+        run: |
+          ls -la terraform.tfvars
+          echo "--- terraform.tfvars ---"
+          cat terraform.tfvars
 
       - id: auth
         name: Auth to Google Cloud (WIF)
@@ -39,10 +47,10 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Prepare Terraform plugin cache
+      - name: Prepare plugin cache
         run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
 
-      - name: Cache Terraform plugin cache
+      - name: Cache plugin cache
         uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
@@ -50,33 +58,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      # -----------------------------
-      # Bootstrap (enable required APIs)
-      # -----------------------------
-      - name: Terraform Init (bootstrap)
+      # -----------------------
+      # Bootstrap
+      # -----------------------
+      - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
           rm -rf .terraform
           terraform init -reconfigure
 
-      - name: Terraform Apply (bootstrap)
+      - name: Apply (bootstrap) - enable APIs
         working-directory: bootstrap
         run: terraform apply -auto-approve -var-file=../terraform.tfvars
 
-      # -----------------------------
-      # Infra (plan always, apply only on main push / workflow_dispatch)
-      # -----------------------------
-      - name: Terraform Init (infra)
+      # -----------------------
+      # Infra (plan)
+      # -----------------------
+      - name: Init (infra)
         working-directory: infra
         run: |
           rm -rf .terraform
           terraform init -reconfigure
 
-      - name: Terraform Validate (infra)
+      - name: Validate (infra)
         working-directory: infra
         run: terraform validate
 
-      - name: Terraform Plan (infra)
+      - name: Plan (infra)
         working-directory: infra
         run: terraform plan -var-file=../terraform.tfvars -out=tfplan
 
@@ -88,7 +96,72 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Terraform Apply (infra)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+  apply:
+    name: Apply (main only)
+    needs: plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 任意：apply側でもtfvars確認（原因切り分けが楽）
+      - name: Show tfvars
+        run: |
+          ls -la terraform.tfvars
+          echo "--- terraform.tfvars ---"
+          cat terraform.tfvars
+
+      - id: auth
+        name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 600s
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Prepare plugin cache
+        run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+
+      - name: Cache plugin cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tf-plugin-cache
+          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            ${{ runner.os }}-tf-plugins-
+
+      - name: Download tfplan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra
+
+      # 念のため bootstrap（初回以降はno-op）
+      - name: Init (bootstrap)
+        working-directory: bootstrap
+        run: |
+          rm -rf .terraform
+          terraform init -reconfigure
+
+      - name: Apply (bootstrap)
+        working-directory: bootstrap
+        run: terraform apply -auto-approve -var-file=../terraform.tfvars
+
+      - name: Init (infra)
+        working-directory: infra
+        run: |
+          rm -rf .terraform
+          terraform init -reconfigure
+
+      - name: Apply (infra)
         working-directory: infra
         run: terraform apply -auto-approve tfplan
