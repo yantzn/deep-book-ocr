@@ -52,9 +52,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      # -----------------------
-      # Bootstrap (plan only)
-      # -----------------------
       - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
@@ -65,9 +62,6 @@ jobs:
         working-directory: bootstrap
         run: terraform plan -var-file=../terraform.tfvars
 
-      # -----------------------
-      # Infra (plan)
-      # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
@@ -80,15 +74,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
-
-      - name: Upload tfplan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: infra/tfplan
-          if-no-files-found: error
-          retention-days: 3
+        run: terraform plan -var-file=../terraform.tfvars
 
   terraform-apply:
     name: Terraform Apply (main)
@@ -125,12 +111,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Download tfplan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: infra
-
       # -----------------------
       # Bootstrap (apply)
       # -----------------------
@@ -145,13 +125,17 @@ jobs:
         run: terraform apply -auto-approve -var-file=../terraform.tfvars
 
       # -----------------------
-      # Infra (apply)
+      # Infra (plan + apply)
       # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
           rm -rf .terraform
           terraform init -reconfigure
+
+      - name: Plan (infra)
+        working-directory: infra
+        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
 
       - name: Apply (infra)
         working-directory: infra
