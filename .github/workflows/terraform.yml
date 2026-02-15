@@ -18,7 +18,7 @@ env:
 
 jobs:
   plan:
-    name: Plan (bootstrap -> infra)
+    name: Terraform Plan (bootstrap + infra)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -27,13 +27,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # 任意：tfvarsが無い場合にすぐ分かるように表示
-      - name: Show tfvars
-        run: |
-          ls -la terraform.tfvars
-          echo "--- terraform.tfvars ---"
-          cat terraform.tfvars
 
       - id: auth
         name: Auth to Google Cloud (WIF)
@@ -61,6 +54,13 @@ jobs:
       # -----------------------
       # Bootstrap
       # -----------------------
+      - name: Show tfvars (bootstrap)
+        working-directory: bootstrap
+        run: |
+          ls -la terraform.tfvars
+          echo "--- bootstrap/terraform.tfvars ---"
+          cat terraform.tfvars
+
       - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
@@ -69,11 +69,18 @@ jobs:
 
       - name: Apply (bootstrap) - enable APIs
         working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=../terraform.tfvars
+        run: terraform apply -auto-approve -var-file=terraform.tfvars
 
       # -----------------------
       # Infra (plan)
       # -----------------------
+      - name: Show tfvars (infra)
+        working-directory: infra
+        run: |
+          ls -la terraform.tfvars
+          echo "--- infra/terraform.tfvars ---"
+          cat terraform.tfvars
+
       - name: Init (infra)
         working-directory: infra
         run: |
@@ -86,7 +93,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
+        run: terraform plan -var-file=terraform.tfvars -out=tfplan
 
       - name: Upload tfplan artifact
         uses: actions/upload-artifact@v4
@@ -97,7 +104,7 @@ jobs:
           retention-days: 3
 
   apply:
-    name: Apply (main only)
+    name: Terraform Apply (main)
     needs: plan
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -108,13 +115,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # 任意：apply側でもtfvars確認（原因切り分けが楽）
-      - name: Show tfvars
-        run: |
-          ls -la terraform.tfvars
-          echo "--- terraform.tfvars ---"
-          cat terraform.tfvars
 
       - id: auth
         name: Auth to Google Cloud (WIF)
@@ -145,7 +145,9 @@ jobs:
           name: tfplan
           path: infra
 
-      # 念のため bootstrap（初回以降はno-op）
+      # -----------------------
+      # Bootstrap (apply)
+      # -----------------------
       - name: Init (bootstrap)
         working-directory: bootstrap
         run: |
@@ -154,8 +156,11 @@ jobs:
 
       - name: Apply (bootstrap)
         working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=../terraform.tfvars
+        run: terraform apply -auto-approve -var-file=terraform.tfvars
 
+      # -----------------------
+      # Infra (apply)
+      # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
