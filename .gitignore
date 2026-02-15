@@ -4,11 +4,13 @@
 *.tfstate.*
 crash.log
 *.tfplan
+terraform.tfvars
 *.tfvars
 *.tfvars.json
-terraform.tfvars
+.override.tf
+.override.tf.json
 
-# Generated archives
+# Generated function archives
 files/*.zip
 
 # Python
@@ -27,8 +29,7 @@ env/
 Thumbs.db
 *.log
 
-# GCP credentials (prevent accidental commit)
+# Credentials (念のため)
 application_default_credentials.json
-*.json
-!package.json
-!package-lock.json
+*.pem
+*.key

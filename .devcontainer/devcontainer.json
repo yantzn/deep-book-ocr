@@ -1,14 +1,14 @@
 {
   "name": "GCP OCR with Compose",
   "dockerComposeFile": "docker-compose.yml",
-  "service": "app", // Compose内のどのサービスに接続するか
+  "service": "app",
   "workspaceFolder": "/workspace",
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-python.python",   // Python支援
-        "hashicorp.terraform", // Terraform支援
-        "googlecloudtools.cloudcode" // GCP連携
+        "ms-python.python",
+        "hashicorp.terraform",
+        "googlecloudtools.cloudcode"
       ]
     }
   },

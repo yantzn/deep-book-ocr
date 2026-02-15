@@ -17,8 +17,7 @@ env:
   TF_PLUGIN_CACHE_DIR: /tmp/tf-plugin-cache
 
 jobs:
-  terraform-plan:
-    name: Terraform Plan
+  terraform:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,82 +50,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Terraform Init
+      # --- Bootstrap (enable APIs) ---
+      - name: Terraform Init (bootstrap)
+        working-directory: bootstrap
         run: |
           rm -rf .terraform
           terraform init -reconfigure
 
-      # Bootstrap: 先に API を有効化（refreshしないのが超重要）
-      # - Cloud Resource Manager API が無効だと、google_project_iam_member の refresh/plan が落ちる
-      - name: Bootstrap required APIs (Terraform-only)
-        run: |
-          terraform apply -auto-approve -refresh=false -target=google_project_service.required
+      - name: Terraform Apply (bootstrap)
+        working-directory: bootstrap
+        run: terraform apply -auto-approve -var-file=../terraform.tfvars
 
-      - name: Terraform Validate
+      # --- Infra ---
+      - name: Terraform Init (infra)
+        working-directory: infra
+        run: |
+          rm -rf .terraform
+          terraform init -reconfigure
+
+      - name: Terraform Validate (infra)
+        working-directory: infra
         run: terraform validate
 
-      - name: Terraform Plan
-        run: terraform plan -var-file=terraform.tfvars -out=tfplan
+      - name: Terraform Plan (infra)
+        working-directory: infra
+        run: terraform plan -var-file=../terraform.tfvars -out=tfplan
 
-      - name: Upload tfplan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
-          if-no-files-found: error
-          retention-days: 1
-
-  terraform-apply:
-    name: Terraform Apply
-    needs: terraform-plan
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - id: auth
-        name: Auth to Google Cloud (WIF)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-          token_format: access_token
-          access_token_lifetime: 300s
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Prepare Terraform plugin cache
-        run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-
-      - name: Cache Terraform plugin cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/tf-plugin-cache
-          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
-          restore-keys: |
-            ${{ runner.os }}-tf-plugins-
-
-      - name: Download tfplan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: .
-
-      - name: Terraform Init
-        run: |
-          rm -rf .terraform
-          terraform init -reconfigure
-
-      # Apply側でも念のため bootstrap（初回以降は即no-op）
-      - name: Bootstrap required APIs (Terraform-only)
-        run: |
-          terraform apply -auto-approve -refresh=false -target=google_project_service.required
-
-      - name: Terraform Apply
+      - name: Terraform Apply (infra)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: infra
         run: terraform apply -auto-approve tfplan
