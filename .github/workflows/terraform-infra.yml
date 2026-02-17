@@ -1,16 +1,14 @@
-name: Terraform (infra only)
+name: Terraform (infra)
 
 on:
   pull_request:
     branches: ["main"]
     paths:
-      - "bootstrap/**"
       - "infra/**"
       - ".github/workflows/terraform-infra.yml"
   push:
     branches: ["main"]
     paths:
-      - "bootstrap/**"
       - "infra/**"
       - ".github/workflows/terraform-infra.yml"
   workflow_dispatch:
@@ -49,13 +47,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Init/Plan (bootstrap)
-        working-directory: bootstrap
-        run: |
-          terraform init -reconfigure
-          terraform plan -var-file=terraform.tfvars
-
-      - name: Init/Plan (infra)
+      - name: Init/Validate/Plan (infra)
         working-directory: infra
         run: |
           terraform init -reconfigure
@@ -86,13 +78,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Apply (bootstrap)
-        working-directory: bootstrap
-        run: |
-          terraform init -reconfigure
-          terraform apply -auto-approve -var-file=terraform.tfvars
-
-      - name: Apply (infra)
+      - name: Init/Apply (infra)
         working-directory: infra
         run: |
           terraform init -reconfigure

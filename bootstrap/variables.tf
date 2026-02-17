@@ -1,18 +1,15 @@
 variable "project_id" {
-  type = string
+  type        = string
+  description = "GCP Project ID"
 }
 
 variable "region" {
-  type    = string
-  default = "asia-northeast1"
+  type        = string
+  description = "Default region"
+  default     = "asia-northeast1"
 }
 
 variable "github_repo" {
   type        = string
-  description = "owner/repo 形式（例: yantzn/deep-book-ocr）"
-}
-
-variable "service_account_id" {
-  type    = string
-  default = "github-actions-sa"
+  description = "GitHub repository in owner/repo format"
 }
