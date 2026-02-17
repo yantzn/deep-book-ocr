@@ -1,0 +1,84 @@
+name: Deploy Cloud Functions (Gen2)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "functions/**"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 1200s
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform (read outputs only)
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Read infra outputs
+        id: tfout
+        working-directory: infra
+        run: |
+          terraform init -reconfigure
+          echo "PROJECT_ID=$(terraform output -raw project_id)" >> $GITHUB_OUTPUT
+          echo "REGION=$(terraform output -raw region)" >> $GITHUB_OUTPUT
+          echo "RUNTIME_SA=$(terraform output -raw runtime_sa)" >> $GITHUB_OUTPUT
+          echo "BUCKET_INPUT=$(terraform output -raw bucket_input)" >> $GITHUB_OUTPUT
+          echo "BUCKET_TEMP=$(terraform output -raw bucket_temp)" >> $GITHUB_OUTPUT
+          echo "BUCKET_OUTPUT=$(terraform output -raw bucket_output)" >> $GITHUB_OUTPUT
+          echo "PROCESSOR_LOCATION=$(terraform output -raw documentai_location)" >> $GITHUB_OUTPUT
+          echo "OCR_PROCESSOR_NAME=$(terraform output -raw ocr_processor_id)" >> $GITHUB_OUTPUT
+
+      # --- ocr-trigger ---
+      - name: Deploy ocr-trigger (Gen2)
+        run: |
+          gcloud functions deploy ocr-trigger \
+            --gen2 \
+            --project="${{ steps.tfout.outputs.PROJECT_ID }}" \
+            --region="${{ steps.tfout.outputs.REGION }}" \
+            --runtime=python310 \
+            --source="functions/ocr_trigger" \
+            --entry-point=start_ocr \
+            --service-account="${{ steps.tfout.outputs.RUNTIME_SA }}" \
+            --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --trigger-event-filters="bucket=${{ steps.tfout.outputs.BUCKET_INPUT }}" \
+            --set-env-vars="GCP_PROJECT_ID=${{ steps.tfout.outputs.PROJECT_ID }},PROCESSOR_LOCATION=${{ steps.tfout.outputs.PROCESSOR_LOCATION }},PROCESSOR_NAME=${{ steps.tfout.outputs.OCR_PROCESSOR_NAME }},TEMP_BUCKET=${{ steps.tfout.outputs.BUCKET_TEMP }},OUTPUT_BUCKET=${{ steps.tfout.outputs.BUCKET_OUTPUT }}" \
+            --memory=256Mi \
+            --max-instances=1 \
+            --timeout=60s
+
+      # --- md-generator ---
+      - name: Deploy md-generator (Gen2)
+        run: |
+          gcloud functions deploy md-generator \
+            --gen2 \
+            --project="${{ steps.tfout.outputs.PROJECT_ID }}" \
+            --region="${{ steps.tfout.outputs.REGION }}" \
+            --runtime=python310 \
+            --source="functions/md_generator" \
+            --entry-point=generate_markdown \
+            --service-account="${{ steps.tfout.outputs.RUNTIME_SA }}" \
+            --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
+            --trigger-event-filters="bucket=${{ steps.tfout.outputs.BUCKET_TEMP }}" \
+            --set-env-vars="GCP_PROJECT_ID=${{ steps.tfout.outputs.PROJECT_ID }},OUTPUT_BUCKET=${{ steps.tfout.outputs.BUCKET_OUTPUT }}" \
+            --memory=1Gi \
+            --max-instances=3 \
+            --timeout=540s
