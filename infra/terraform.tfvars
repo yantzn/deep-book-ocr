@@ -1,3 +1,4 @@
-project_id        = "deep-book-ocr"
-region            = "asia-northeast1"
-github_repository = "yantzn/deep-book-ocr"
+project_id      = "deep-book-ocr"
+region          = "asia-northeast1"
+bucket_location = "asia-northeast1"
+bucket_seed     = "v1"

@@ -1,4 +1,4 @@
-name: Terraform CI/CD (bootstrap + infra)
+name: Terraform CI/CD (infra only, WIF)
 
 on:
   pull_request:
@@ -37,6 +37,8 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -52,22 +54,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      # -----------------------
-      # Bootstrap (plan only)
-      # -----------------------
-      - name: Init (bootstrap)
-        working-directory: bootstrap
-        run: |
-          rm -rf .terraform
-          terraform init -reconfigure
-
-      - name: Plan (bootstrap)
-        working-directory: bootstrap
-        run: terraform plan -var-file=terraform.tfvars
-
-      # -----------------------
-      # Infra (plan)
-      # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
@@ -102,6 +88,8 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
+          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -117,22 +105,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      # -----------------------
-      # Bootstrap (apply)
-      # -----------------------
-      - name: Init (bootstrap)
-        working-directory: bootstrap
-        run: |
-          rm -rf .terraform
-          terraform init -reconfigure
-
-      - name: Apply (bootstrap)
-        working-directory: bootstrap
-        run: terraform apply -auto-approve -var-file=terraform.tfvars
-
-      # -----------------------
-      # Infra (plan + apply)
-      # -----------------------
       - name: Init (infra)
         working-directory: infra
         run: |
