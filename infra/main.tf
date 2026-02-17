@@ -1,59 +1,146 @@
-provider "google" {
-  project = var.project_id
-  region  = var.region
+locals {
+  bucket_keys = toset(["input", "output", "source", "temp"])
 }
 
-# 変更したい時は bucket_seed を変えるだけで suffix が変わる（=バケット名を作り直せる）
 resource "random_id" "bucket_suffix" {
-  byte_length = 3 # 6 hex chars
+  byte_length = 3 # 6 hex くらい
   keepers = {
-    seed = var.bucket_seed
+    rotation = var.bucket_rotation_key
+    project  = var.project_id
   }
 }
 
 locals {
   suffix = random_id.bucket_suffix.hex
-
-  buckets = {
-    input  = "deep-book-ocr-input-${local.suffix}"
-    source = "deep-book-ocr-source-${local.suffix}"
-    temp   = "deep-book-ocr-temp-${local.suffix}"
-    output = "deep-book-ocr-output-${local.suffix}"
+  bucket_name = {
+    for k in local.bucket_keys :
+    k => "${var.project_id}-${k}-${local.suffix}"
   }
 }
 
 resource "google_storage_bucket" "buckets" {
-  for_each = local.buckets
+  for_each      = local.bucket_name
+  name          = each.value
+  location      = var.bucket_location
+  storage_class = "STANDARD"
+  force_destroy = true
+}
 
-  name     = each.value
-  location = var.bucket_location
+# Artifact Registry（Cloud Functions Gen2 の build/repo 用）
+resource "google_artifact_registry_repository" "gcf_artifacts" {
+  location      = var.region
+  repository_id = "gcf-artifacts"
+  format        = "DOCKER"
+}
 
-  uniform_bucket_level_access = true
-  force_destroy               = false
+# Document AI OCR Processor
+resource "google_document_ai_processor" "ocr_processor" {
+  display_name = "book-ocr-processor"
+  location     = var.documentai_location
+  type         = "OCR_PROCESSOR"
+}
 
-  versioning {
-    enabled = true
+# ---- Cloud Functions Gen2 用 ZIP を作って source bucket に置く（例） ----
+data "archive_file" "ocr_trigger_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../functions/ocr_trigger"
+  output_path = "${path.module}/../files/ocr_trigger.zip"
+}
+
+data "archive_file" "md_generator_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../functions/md_generator"
+  output_path = "${path.module}/../files/md_generator.zip"
+}
+
+resource "google_storage_bucket_object" "ocr_trigger_code" {
+  bucket = google_storage_bucket.buckets["source"].name
+  name   = "ocr_trigger.${data.archive_file.ocr_trigger_zip.output_md5}.zip"
+  source = data.archive_file.ocr_trigger_zip.output_path
+}
+
+resource "google_storage_bucket_object" "md_generator_code" {
+  bucket = google_storage_bucket.buckets["source"].name
+  name   = "md_generator.${data.archive_file.md_generator_zip.output_md5}.zip"
+  source = data.archive_file.md_generator_zip.output_path
+}
+
+# OCR Trigger Function（input bucket finalized → OCR 実行）
+resource "google_cloudfunctions2_function" "ocr_trigger" {
+  name     = "ocr-trigger"
+  location = var.region
+
+  build_config {
+    runtime     = "python310"
+    entry_point = "start_ocr"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.ocr_trigger_code.name
+      }
+    }
   }
 
-  lifecycle_rule {
-    condition {
-      age = 30
+  service_config {
+    available_memory   = "256Mi"
+    max_instance_count = 1
+    ingress_settings   = "ALLOW_ALL"
+    environment_variables = {
+      GCP_PROJECT_ID     = var.project_id
+      PROCESSOR_LOCATION = var.documentai_location
+      PROCESSOR_ID       = google_document_ai_processor.ocr_processor.id
+      TEMP_BUCKET        = google_storage_bucket.buckets["temp"].name
+      OUTPUT_BUCKET      = google_storage_bucket.buckets["output"].name
     }
-    action {
-      type = "Delete"
+  }
+
+  event_trigger {
+    event_type     = "google.cloud.storage.object.v1.finalized"
+    trigger_region = var.region
+    retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
+
+    event_filters {
+      attribute = "bucket"
+      value     = google_storage_bucket.buckets["input"].name
     }
   }
 }
 
-# （例）Pub/Sub topic（通知などに使うなら）
-resource "google_pubsub_topic" "ocr_events" {
-  name = "deep-book-ocr-events-${local.suffix}"
-}
+# MD Generator Function（temp bucket finalized → Markdown 生成）
+resource "google_cloudfunctions2_function" "md_generator" {
+  name     = "md-generator"
+  location = var.region
 
-output "bucket_names" {
-  value = local.buckets
-}
+  build_config {
+    runtime     = "python310"
+    entry_point = "generate_markdown"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.md_generator_code.name
+      }
+    }
+  }
 
-output "bucket_suffix" {
-  value = local.suffix
+  service_config {
+    available_memory   = "1Gi"
+    max_instance_count = 3
+    timeout_seconds    = 540
+    ingress_settings   = "ALLOW_ALL"
+    environment_variables = {
+      GCP_PROJECT_ID = var.project_id
+      OUTPUT_BUCKET  = google_storage_bucket.buckets["output"].name
+    }
+  }
+
+  event_trigger {
+    event_type     = "google.cloud.storage.object.v1.finalized"
+    trigger_region = var.region
+    retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
+
+    event_filters {
+      attribute = "bucket"
+      value     = google_storage_bucket.buckets["temp"].name
+    }
+  }
 }

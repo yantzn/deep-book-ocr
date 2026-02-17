@@ -1,22 +1,25 @@
 variable "project_id" {
-  description = "GCP Project ID"
-  type        = string
+  type = string
 }
 
 variable "region" {
-  description = "GCP Region"
-  type        = string
-  default     = "asia-northeast1"
+  type    = string
+  default = "asia-northeast1"
+}
+
+variable "bucket_rotation_key" {
+  # これを変えると suffix が変わって “新バケット” になる
+  # 例: "v1" → "v2"
+  type    = string
+  default = "v1"
 }
 
 variable "bucket_location" {
-  description = "GCS bucket location"
-  type        = string
-  default     = "asia-northeast1"
+  type    = string
+  default = "asia-northeast1"
 }
 
-variable "bucket_seed" {
-  description = "Change this value to force new random suffix (bucket recreation). e.g. v1, v2, 20260218"
-  type        = string
-  default     = "v1"
+variable "documentai_location" {
+  type    = string
+  default = "us"
 }

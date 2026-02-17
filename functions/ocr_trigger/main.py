@@ -6,9 +6,10 @@ from google.cloud import documentai_v1 as documentai
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "deep-book-ocr")
 LOCATION = "us"  # プロセッサの場所
 PROCESSOR_ID = os.environ.get("PROCESSOR_ID")
-TEMP_BUCKET = os.environ.get("TEMP_BUCKET") # 例: gs://deep-book-ocr-temp
+TEMP_BUCKET = os.environ.get("TEMP_BUCKET")  # 例: gs://deep-book-ocr-temp
 
 client = documentai.DocumentProcessorServiceClient()
+
 
 @functions_framework.cloud_event
 def start_ocr(cloud_event):
@@ -49,4 +50,5 @@ def start_ocr(cloud_event):
     )
 
     operation = client.batch_process_documents(request=request)
-    print(f"OCR Job started for {file_name}. Operation: {operation.operation.name}")
+    print(
+        f"OCR Job started for {file_name}. Operation: {operation.operation.name}")

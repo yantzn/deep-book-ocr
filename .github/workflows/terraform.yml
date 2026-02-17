@@ -1,10 +1,16 @@
-name: Terraform CI/CD (infra only, WIF)
+name: Terraform CI/CD (infra only, via WIF)
 
 on:
   pull_request:
     branches: ["main"]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
   push:
     branches: ["main"]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
   workflow_dispatch:
 
 concurrency:
@@ -37,8 +43,6 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
-          create_credentials_file: true
-          export_environment_variables: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -50,7 +54,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
-          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
+          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('infra/.terraform.lock.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
@@ -88,8 +92,6 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
-          create_credentials_file: true
-          export_environment_variables: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -101,7 +103,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
-          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
+          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('infra/.terraform.lock.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
