@@ -1,4 +1,4 @@
-name: Terraform (infra)
+name: Terraform (infra only)
 
 on:
   pull_request:
@@ -13,6 +13,10 @@ on:
       - ".github/workflows/terraform-infra.yml"
   workflow_dispatch:
 
+concurrency:
+  group: terraform-infra-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
@@ -24,62 +28,103 @@ env:
 
 jobs:
   plan:
+    name: Terraform Plan (infra / PR)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: google-github-actions/auth@v2
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      - run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+      - name: Prepare plugin cache
+        run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
 
-      - uses: actions/cache@v4
+      - name: Cache plugin cache
+        uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
           key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Init/Validate/Plan (infra)
+      - name: Init (infra)
         working-directory: infra
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
         run: |
-          terraform init -reconfigure
-          terraform validate
-          terraform plan -var-file=terraform.tfvars
+          rm -rf .terraform
+          terraform init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="prefix=terraform/state/infra"
+
+      - name: Validate (infra)
+        working-directory: infra
+        run: terraform validate
+
+      - name: Plan (infra)
+        working-directory: infra
+        run: terraform plan -var-file=terraform.tfvars
 
   apply:
+    name: Terraform Apply (infra / main)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: google-github-actions/auth@v2
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
           token_format: access_token
           access_token_lifetime: 600s
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      - run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+      - name: Prepare plugin cache
+        run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
 
-      - uses: actions/cache@v4
+      - name: Cache plugin cache
+        uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
           key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tf-plugins-
 
-      - name: Init/Apply (infra)
+      - name: Init (infra)
         working-directory: infra
+        env:
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
         run: |
-          terraform init -reconfigure
-          terraform apply -auto-approve -var-file=terraform.tfvars
+          rm -rf .terraform
+          terraform init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="prefix=terraform/state/infra"
+
+      - name: Plan (infra)
+        working-directory: infra
+        run: terraform plan -var-file=terraform.tfvars -out=tfplan
+
+      - name: Apply (infra)
+        working-directory: infra
+        run: terraform apply -auto-approve tfplan

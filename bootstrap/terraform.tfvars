@@ -1,3 +1,5 @@
-project_id  = "deep-book-ocr"
-github_repo = "yantzn/deep-book-ocr"
-region      = "asia-northeast1"
+project_id        = "deep-book-ocr"
+region            = "asia-northeast1"
+tfstate_location  = "ASIA-NORTHEAST1"
+github_repository = "yantzn/deep-book-ocr"
+rotation_key      = "v1"
