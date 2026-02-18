@@ -3,7 +3,8 @@ locals {
 }
 
 resource "random_id" "bucket_suffix" {
-  byte_length = 3 # 6 hex くらい
+  byte_length = 3 # 6 hex
+
   keepers = {
     rotation = var.bucket_rotation_key
     project  = var.project_id
@@ -13,24 +14,39 @@ resource "random_id" "bucket_suffix" {
 locals {
   suffix = random_id.bucket_suffix.hex
   bucket_name = {
-    for k in local.bucket_keys :
-    k => "${var.project_id}-${k}-${local.suffix}"
+    for k in local.bucket_keys : k => "${var.project_id}-${k}-${local.suffix}"
   }
 }
 
 resource "google_storage_bucket" "buckets" {
-  for_each      = local.bucket_name
+  for_each = local.bucket_name
+
   name          = each.value
   location      = var.bucket_location
   storage_class = "STANDARD"
   force_destroy = true
+
+  depends_on = [google_project_service.required]
 }
 
-# Artifact Registry（Cloud Functions Gen2 の build/repo 用）
+# Cloud Functions Gen2 のイベント通知に必要（GCS -> Pub/Sub publish）
+data "google_storage_project_service_account" "gcs_account" {}
+
+resource "google_project_iam_member" "gcs_pubsub_publishing" {
+  project = var.project_id
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+
+  depends_on = [google_project_service.required]
+}
+
+# Artifact Registry（Cloud Functions Gen2 build 用）
 resource "google_artifact_registry_repository" "gcf_artifacts" {
   location      = var.region
   repository_id = "gcf-artifacts"
   format        = "DOCKER"
+
+  depends_on = [google_project_service.required]
 }
 
 # Document AI OCR Processor
@@ -38,9 +54,11 @@ resource "google_document_ai_processor" "ocr_processor" {
   display_name = "book-ocr-processor"
   location     = var.documentai_location
   type         = "OCR_PROCESSOR"
+
+  depends_on = [google_project_service.required]
 }
 
-# ---- Cloud Functions Gen2 用 ZIP を作って source bucket に置く（例） ----
+# ---- Cloud Functions Gen2 用 ZIP ----
 data "archive_file" "ocr_trigger_zip" {
   type        = "zip"
   source_dir  = "${path.module}/../functions/ocr_trigger"
@@ -85,6 +103,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     available_memory   = "256Mi"
     max_instance_count = 1
     ingress_settings   = "ALLOW_ALL"
+
     environment_variables = {
       GCP_PROJECT_ID     = var.project_id
       PROCESSOR_LOCATION = var.documentai_location
@@ -104,6 +123,12 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       value     = google_storage_bucket.buckets["input"].name
     }
   }
+
+  depends_on = [
+    google_project_service.required,
+    google_project_iam_member.gcs_pubsub_publishing,
+    google_artifact_registry_repository.gcf_artifacts,
+  ]
 }
 
 # MD Generator Function（temp bucket finalized → Markdown 生成）
@@ -127,6 +152,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
     max_instance_count = 3
     timeout_seconds    = 540
     ingress_settings   = "ALLOW_ALL"
+
     environment_variables = {
       GCP_PROJECT_ID = var.project_id
       OUTPUT_BUCKET  = google_storage_bucket.buckets["output"].name
@@ -143,4 +169,10 @@ resource "google_cloudfunctions2_function" "md_generator" {
       value     = google_storage_bucket.buckets["temp"].name
     }
   }
+
+  depends_on = [
+    google_project_service.required,
+    google_project_iam_member.gcs_pubsub_publishing,
+    google_artifact_registry_repository.gcf_artifacts,
+  ]
 }
