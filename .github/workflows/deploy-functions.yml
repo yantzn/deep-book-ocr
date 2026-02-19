@@ -81,6 +81,7 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
+            --build-service-account="projects/${{ secrets.GCP_PROJECT_ID }}/serviceAccounts/${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/ocr_trigger \
@@ -99,6 +100,7 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
+            --build-service-account="projects/${{ secrets.GCP_PROJECT_ID }}/serviceAccounts/${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/md_generator \
