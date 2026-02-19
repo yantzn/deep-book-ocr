@@ -117,6 +117,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     runtime           = "python310"
     entry_point       = "start_ocr"
     docker_repository = google_artifact_registry_repository.gcf_artifacts.id
+    service_account   = var.functions_service_account_email
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
@@ -169,6 +170,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
     runtime           = "python310"
     entry_point       = "generate_markdown"
     docker_repository = google_artifact_registry_repository.gcf_artifacts.id
+    service_account   = var.functions_service_account_email
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
