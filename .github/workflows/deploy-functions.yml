@@ -16,12 +16,6 @@ concurrency:
   group: deploy-functions-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  TF_IN_AUTOMATION: "true"
-  TF_INPUT: "false"
-  TF_PLUGIN_CACHE_DIR: /tmp/tf-plugin-cache
-  TF_CLI_ARGS: "-no-color"
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -36,40 +30,6 @@ jobs:
           token_format: access_token
           access_token_lifetime: 600s
 
-      - uses: hashicorp/setup-terraform@v3
-
-      - run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-
-      - uses: actions/cache@v4
-        with:
-          path: /tmp/tf-plugin-cache
-          key: ${{ runner.os }}-tf-plugins-${{ hashFiles('**/.terraform.lock.hcl') }}
-          restore-keys: |
-            ${{ runner.os }}-tf-plugins-
-
-      - name: Terraform Init (infra backend)
-        working-directory: infra
-        env:
-          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
-        run: |
-          set -euo pipefail
-          terraform init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}" \
-            -backend-config="prefix=terraform/state/infra"
-
-      - name: Read terraform outputs (buckets)
-        working-directory: infra
-        run: |
-          set -euo pipefail
-          OUT_JSON="$(terraform output -json)"
-          echo "$OUT_JSON" | jq -r '.input_bucket.value'  | sed 's/^/INPUT_BUCKET=/'  >> "$GITHUB_ENV"
-          echo "$OUT_JSON" | jq -r '.temp_bucket.value'   | sed 's/^/TEMP_BUCKET=/'   >> "$GITHUB_ENV"
-          echo "$OUT_JSON" | jq -r '.output_bucket.value' | sed 's/^/OUTPUT_BUCKET=/' >> "$GITHUB_ENV"
-          echo "$OUT_JSON" | jq -r '.source_bucket.value' | sed 's/^/SOURCE_BUCKET=/' >> "$GITHUB_ENV"
-          OCR_PROCESSOR_RESOURCE="$(echo "$OUT_JSON" | jq -r '.ocr_processor_id.value')"
-          echo "PROCESSOR_ID=${OCR_PROCESSOR_RESOURCE##*/}" >> "$GITHUB_ENV"
-          echo "PROCESSOR_LOCATION=$(echo "$OCR_PROCESSOR_RESOURCE" | awk -F/ '{print $4}')" >> "$GITHUB_ENV"
-
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
@@ -81,16 +41,8 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
-            --build-service-account="projects/${{ secrets.GCP_PROJECT_ID }}/serviceAccounts/${{ secrets.WIF_SERVICE_ACCOUNT }}" \
-            --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
-            --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/ocr_trigger \
             --entry-point=start_ocr \
-            --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
-            --trigger-event-filters="bucket=${INPUT_BUCKET}" \
-            --set-env-vars="GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},PROCESSOR_LOCATION=${PROCESSOR_LOCATION},PROCESSOR_ID=${PROCESSOR_ID},TEMP_BUCKET=${TEMP_BUCKET},OUTPUT_BUCKET=${OUTPUT_BUCKET}" \
-            --memory=256Mi \
-            --max-instances=1 \
             --quiet
 
       - name: Deploy md-generator (Gen2)
@@ -100,15 +52,6 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
-            --build-service-account="projects/${{ secrets.GCP_PROJECT_ID }}/serviceAccounts/${{ secrets.WIF_SERVICE_ACCOUNT }}" \
-            --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
-            --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/md_generator \
             --entry-point=generate_markdown \
-            --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
-            --trigger-event-filters="bucket=${TEMP_BUCKET}" \
-            --set-env-vars="GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},OUTPUT_BUCKET=${OUTPUT_BUCKET}" \
-            --memory=1Gi \
-            --timeout=540s \
-            --max-instances=3 \
             --quiet
