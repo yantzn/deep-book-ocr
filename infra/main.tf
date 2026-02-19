@@ -65,6 +65,41 @@ resource "google_pubsub_topic_iam_member" "gcs_publish_temp" {
   member  = "serviceAccount:${local.gcs_service_agent}"
 }
 
+resource "google_service_account" "functions_sa" {
+  account_id   = "functions-sa-${local.suffix}"
+  display_name = "Cloud Functions runtime/trigger SA (${local.suffix})"
+}
+
+resource "google_project_iam_member" "functions_sa_eventarc_receiver" {
+  project = var.project_id
+  role    = "roles/eventarc.eventReceiver"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_sa_run_invoker" {
+  project = var.project_id
+  role    = "roles/run.invoker"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_sa_storage_object_admin" {
+  project = var.project_id
+  role    = "roles/storage.objectAdmin"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_sa_documentai_api_user" {
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_sa_logging_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
 # Artifact Registry（Cloud Functions Gen2 build 用）
 resource "google_artifact_registry_repository" "gcf_artifacts" {
   location      = var.region
@@ -126,9 +161,10 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   service_config {
-    available_memory   = "256Mi"
-    max_instance_count = 1
-    ingress_settings   = "ALLOW_ALL"
+    available_memory      = "256Mi"
+    max_instance_count    = 1
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = google_service_account.functions_sa.email
 
     environment_variables = {
       GCP_PROJECT_ID     = var.project_id
@@ -140,9 +176,10 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   event_trigger {
-    event_type     = "google.cloud.storage.object.v1.finalized"
-    trigger_region = var.region
-    retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
+    event_type            = "google.cloud.storage.object.v1.finalized"
+    trigger_region        = var.region
+    retry_policy          = "RETRY_POLICY_DO_NOT_RETRY"
+    service_account_email = google_service_account.functions_sa.email
 
     event_filters {
       attribute = "bucket"
@@ -155,6 +192,11 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     google_project_service.required,
     google_pubsub_topic_iam_member.gcs_publish_input,
     google_artifact_registry_repository.gcf_artifacts,
+    google_project_iam_member.functions_sa_eventarc_receiver,
+    google_project_iam_member.functions_sa_run_invoker,
+    google_project_iam_member.functions_sa_storage_object_admin,
+    google_project_iam_member.functions_sa_documentai_api_user,
+    google_project_iam_member.functions_sa_logging_writer,
   ]
 }
 
@@ -176,10 +218,11 @@ resource "google_cloudfunctions2_function" "md_generator" {
   }
 
   service_config {
-    available_memory   = "1Gi"
-    max_instance_count = 3
-    timeout_seconds    = 540
-    ingress_settings   = "ALLOW_ALL"
+    available_memory      = "1Gi"
+    max_instance_count    = 3
+    timeout_seconds       = 540
+    ingress_settings      = "ALLOW_ALL"
+    service_account_email = google_service_account.functions_sa.email
 
     environment_variables = {
       GCP_PROJECT_ID = var.project_id
@@ -188,9 +231,10 @@ resource "google_cloudfunctions2_function" "md_generator" {
   }
 
   event_trigger {
-    event_type     = "google.cloud.storage.object.v1.finalized"
-    trigger_region = var.region
-    retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
+    event_type            = "google.cloud.storage.object.v1.finalized"
+    trigger_region        = var.region
+    retry_policy          = "RETRY_POLICY_DO_NOT_RETRY"
+    service_account_email = google_service_account.functions_sa.email
 
     event_filters {
       attribute = "bucket"
@@ -203,5 +247,10 @@ resource "google_cloudfunctions2_function" "md_generator" {
     google_project_service.required,
     google_pubsub_topic_iam_member.gcs_publish_temp,
     google_artifact_registry_repository.gcf_artifacts,
+    google_project_iam_member.functions_sa_eventarc_receiver,
+    google_project_iam_member.functions_sa_run_invoker,
+    google_project_iam_member.functions_sa_storage_object_admin,
+    google_project_iam_member.functions_sa_documentai_api_user,
+    google_project_iam_member.functions_sa_logging_writer,
   ]
 }
