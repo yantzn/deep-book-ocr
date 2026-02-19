@@ -50,12 +50,12 @@ jobs:
       - name: Terraform Init (infra backend)
         working-directory: infra
         env:
-          TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
+          TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
         run: |
           set -euo pipefail
           terraform init -reconfigure \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
-            -backend-config="prefix=infra"
+            -backend-config="prefix=terraform/state/infra"
 
       - name: Read terraform outputs (buckets)
         working-directory: infra

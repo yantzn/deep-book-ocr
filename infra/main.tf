@@ -34,7 +34,8 @@ data "google_project" "current" {
 }
 
 locals {
-  gcs_service_agent = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  gcs_service_agent               = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  functions_build_service_account = startswith(var.functions_service_account_email, "projects/") ? var.functions_service_account_email : "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
 }
 
 resource "google_pubsub_topic" "gcs_input_finalized" {
@@ -117,7 +118,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     runtime           = "python310"
     entry_point       = "start_ocr"
     docker_repository = google_artifact_registry_repository.gcf_artifacts.id
-    service_account   = var.functions_service_account_email
+    service_account   = local.functions_build_service_account
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
@@ -170,7 +171,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
     runtime           = "python310"
     entry_point       = "generate_markdown"
     docker_repository = google_artifact_registry_repository.gcf_artifacts.id
-    service_account   = var.functions_service_account_email
+    service_account   = local.functions_build_service_account
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
