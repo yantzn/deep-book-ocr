@@ -30,9 +30,13 @@ resource "google_storage_bucket" "buckets" {
 }
 
 # Cloud Functions Gen2 のイベント通知に必要（GCS -> Pub/Sub publish）
-data "google_storage_project_service_account" "gcs_account" {}
+data "google_project" "current" {
+  project_id = var.project_id
+}
 
-# ====== ここから（解決策B：Project IAM をやめて Topic IAM にする）======
+locals {
+  gcs_service_agent = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+}
 
 # GCS通知用の Pub/Sub Topic（input用 / temp用）
 resource "google_pubsub_topic" "gcs_input_finalized" {
@@ -54,7 +58,7 @@ resource "google_pubsub_topic_iam_member" "gcs_publish_input" {
   project = var.project_id
   topic   = google_pubsub_topic.gcs_input_finalized.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+  member  = "serviceAccount:${local.gcs_service_agent}"
 
   depends_on = [google_project_service.required]
 }
@@ -63,13 +67,10 @@ resource "google_pubsub_topic_iam_member" "gcs_publish_temp" {
   project = var.project_id
   topic   = google_pubsub_topic.gcs_temp_finalized.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}"
+  member  = "serviceAccount:${local.gcs_service_agent}"
 
   depends_on = [google_project_service.required]
 }
-
-# ====== ここまで（解決策B）======
-
 
 # Artifact Registry（Cloud Functions Gen2 build 用）
 resource "google_artifact_registry_repository" "gcf_artifacts" {
@@ -120,8 +121,9 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   location = var.region
 
   build_config {
-    runtime     = "python310"
-    entry_point = "start_ocr"
+    runtime           = "python310"
+    entry_point       = "start_ocr"
+    docker_repository = google_artifact_registry_repository.gcf_artifacts.id
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
@@ -138,7 +140,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     environment_variables = {
       GCP_PROJECT_ID     = var.project_id
       PROCESSOR_LOCATION = var.documentai_location
-      PROCESSOR_ID       = google_document_ai_processor.ocr_processor.id
+      PROCESSOR_ID       = split("/", google_document_ai_processor.ocr_processor.id)[length(split("/", google_document_ai_processor.ocr_processor.id)) - 1]
       TEMP_BUCKET        = google_storage_bucket.buckets["temp"].name
       OUTPUT_BUCKET      = google_storage_bucket.buckets["output"].name
     }
@@ -171,8 +173,9 @@ resource "google_cloudfunctions2_function" "md_generator" {
   location = var.region
 
   build_config {
-    runtime     = "python310"
-    entry_point = "generate_markdown"
+    runtime           = "python310"
+    entry_point       = "generate_markdown"
+    docker_repository = google_artifact_registry_repository.gcf_artifacts.id
     source {
       storage_source {
         bucket = google_storage_bucket.buckets["source"].name
