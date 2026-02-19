@@ -36,7 +36,6 @@ jobs:
       TF_VAR_region: ${{ secrets.GCP_REGION }}
       TF_VAR_bucket_location: ${{ secrets.BUCKET_LOCATION || secrets.GCP_REGION }}
       TF_VAR_documentai_location: ${{ secrets.DOCUMENTAI_LOCATION || 'us' }}
-      TF_VAR_functions_service_account_email: ${{ secrets.WIF_SERVICE_ACCOUNT }}
     defaults:
       run:
         shell: bash
@@ -94,7 +93,6 @@ jobs:
       TF_VAR_region: ${{ secrets.GCP_REGION }}
       TF_VAR_bucket_location: ${{ secrets.BUCKET_LOCATION || secrets.GCP_REGION }}
       TF_VAR_documentai_location: ${{ secrets.DOCUMENTAI_LOCATION || 'us' }}
-      TF_VAR_functions_service_account_email: ${{ secrets.WIF_SERVICE_ACCOUNT }}
     defaults:
       run:
         shell: bash

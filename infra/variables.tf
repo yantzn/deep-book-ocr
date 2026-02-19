@@ -27,8 +27,3 @@ variable "bucket_rotation_key" {
   type        = string
   default     = "v1"
 }
-
-variable "functions_service_account_email" {
-  description = "Service account email used by Cloud Functions runtime and Eventarc trigger."
-  type        = string
-}
