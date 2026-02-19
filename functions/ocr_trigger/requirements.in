@@ -1,0 +1,7 @@
+# High-level dependencies for the ocr_trigger function
+
+# Application dependencies
+functions-framework
+google-cloud-documentai
+pydantic
+pydantic-settings
