@@ -4,7 +4,7 @@ from google.cloud import documentai_v1 as documentai
 
 # 環境変数はデプロイ時に設定
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "deep-book-ocr")
-LOCATION = "us"  # プロセッサの場所
+LOCATION = os.environ.get("PROCESSOR_LOCATION", "us")  # プロセッサの場所
 PROCESSOR_ID = os.environ.get("PROCESSOR_ID")
 TEMP_BUCKET = os.environ.get("TEMP_BUCKET")  # 例: gs://deep-book-ocr-temp
 

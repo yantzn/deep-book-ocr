@@ -66,6 +66,9 @@ jobs:
           echo "$OUT_JSON" | jq -r '.temp_bucket.value'   | sed 's/^/TEMP_BUCKET=/'   >> "$GITHUB_ENV"
           echo "$OUT_JSON" | jq -r '.output_bucket.value' | sed 's/^/OUTPUT_BUCKET=/' >> "$GITHUB_ENV"
           echo "$OUT_JSON" | jq -r '.source_bucket.value' | sed 's/^/SOURCE_BUCKET=/' >> "$GITHUB_ENV"
+          OCR_PROCESSOR_RESOURCE="$(echo "$OUT_JSON" | jq -r '.ocr_processor_id.value')"
+          echo "PROCESSOR_ID=${OCR_PROCESSOR_RESOURCE##*/}" >> "$GITHUB_ENV"
+          echo "PROCESSOR_LOCATION=$(echo "$OCR_PROCESSOR_RESOURCE" | awk -F/ '{print $4}')" >> "$GITHUB_ENV"
 
       - uses: google-github-actions/setup-gcloud@v2
         with:
@@ -84,7 +87,7 @@ jobs:
             --entry-point=start_ocr \
             --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
             --trigger-event-filters="bucket=${INPUT_BUCKET}" \
-            --set-env-vars="GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},TEMP_BUCKET=${TEMP_BUCKET},OUTPUT_BUCKET=${OUTPUT_BUCKET}" \
+            --set-env-vars="GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},PROCESSOR_LOCATION=${PROCESSOR_LOCATION},PROCESSOR_ID=${PROCESSOR_ID},TEMP_BUCKET=${TEMP_BUCKET},OUTPUT_BUCKET=${OUTPUT_BUCKET}" \
             --memory=256Mi \
             --max-instances=1 \
             --quiet
