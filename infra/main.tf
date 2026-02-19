@@ -34,7 +34,8 @@ data "google_project" "current" {
 }
 
 locals {
-  gcs_service_agent = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  gcs_service_agent               = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
 }
 
 resource "google_pubsub_topic" "gcs_input_finalized" {
@@ -81,4 +82,150 @@ resource "google_document_ai_processor" "ocr_processor" {
   type         = "OCR_PROCESSOR"
 
   depends_on = [google_project_service.required]
+}
+
+data "archive_file" "ocr_source_zip" {
+  type = "zip"
+  source {
+    filename = "main.py"
+    content  = <<-EOT
+def start_ocr(cloud_event):
+    return None
+EOT
+  }
+  output_path = "${path.module}/../files/ocr-trigger.zip"
+}
+
+data "archive_file" "md_source_zip" {
+  type = "zip"
+  source {
+    filename = "main.py"
+    content  = <<-EOT
+def generate_markdown(cloud_event):
+    return None
+EOT
+  }
+  output_path = "${path.module}/../files/md-generator.zip"
+}
+
+resource "google_storage_bucket_object" "ocr_zip" {
+  name   = "ocr-trigger.zip"
+  bucket = google_storage_bucket.buckets["source"].name
+  source = data.archive_file.ocr_source_zip.output_path
+}
+
+resource "google_storage_bucket_object" "md_zip" {
+  name   = "md-generator.zip"
+  bucket = google_storage_bucket.buckets["source"].name
+  source = data.archive_file.md_source_zip.output_path
+}
+
+resource "google_cloudfunctions2_function" "ocr_trigger" {
+  name     = "ocr-trigger"
+  location = var.region
+
+  build_config {
+    runtime     = "python310"
+    entry_point = "start_ocr"
+
+    source {
+      storage_source {
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.ocr_zip.name
+      }
+    }
+
+    docker_repository = google_artifact_registry_repository.gcf_artifacts.id
+    service_account   = local.functions_build_service_account
+  }
+
+  service_config {
+    available_memory      = "256M"
+    max_instance_count    = 1
+    service_account_email = var.functions_service_account_email
+    environment_variables = {
+      GCP_PROJECT_ID     = var.project_id
+      PROCESSOR_LOCATION = var.documentai_location
+      PROCESSOR_ID       = google_document_ai_processor.ocr_processor.id
+      TEMP_BUCKET        = google_storage_bucket.buckets["temp"].name
+      OUTPUT_BUCKET      = google_storage_bucket.buckets["output"].name
+    }
+  }
+
+  event_trigger {
+    trigger_region        = var.region
+    event_type            = "google.cloud.storage.object.v1.finalized"
+    service_account_email = var.functions_service_account_email
+    event_filters {
+      attribute = "bucket"
+      value     = google_storage_bucket.buckets["input"].name
+    }
+    retry_policy = "RETRY_POLICY_RETRY"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      build_config[0].source,
+    ]
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_artifact_registry_repository.gcf_artifacts,
+    google_storage_bucket_object.ocr_zip,
+  ]
+}
+
+resource "google_cloudfunctions2_function" "md_generator" {
+  name     = "md-generator"
+  location = var.region
+
+  build_config {
+    runtime     = "python310"
+    entry_point = "generate_markdown"
+
+    source {
+      storage_source {
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.md_zip.name
+      }
+    }
+
+    docker_repository = google_artifact_registry_repository.gcf_artifacts.id
+    service_account   = local.functions_build_service_account
+  }
+
+  service_config {
+    available_memory      = "1G"
+    timeout_seconds       = 540
+    max_instance_count    = 3
+    service_account_email = var.functions_service_account_email
+    environment_variables = {
+      GCP_PROJECT_ID = var.project_id
+      OUTPUT_BUCKET  = google_storage_bucket.buckets["output"].name
+    }
+  }
+
+  event_trigger {
+    trigger_region        = var.region
+    event_type            = "google.cloud.storage.object.v1.finalized"
+    service_account_email = var.functions_service_account_email
+    event_filters {
+      attribute = "bucket"
+      value     = google_storage_bucket.buckets["temp"].name
+    }
+    retry_policy = "RETRY_POLICY_RETRY"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      build_config[0].source,
+    ]
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_artifact_registry_repository.gcf_artifacts,
+    google_storage_bucket_object.md_zip,
+  ]
 }
