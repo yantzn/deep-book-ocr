@@ -149,8 +149,6 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       value     = google_storage_bucket.buckets["input"].name
     }
 
-    pubsub_topic = google_pubsub_topic.gcs_input_finalized.id
-
   }
 
   depends_on = [
@@ -198,8 +196,6 @@ resource "google_cloudfunctions2_function" "md_generator" {
       attribute = "bucket"
       value     = google_storage_bucket.buckets["temp"].name
     }
-
-    pubsub_topic = google_pubsub_topic.gcs_temp_finalized.id
 
   }
 
