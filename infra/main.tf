@@ -29,7 +29,6 @@ resource "google_storage_bucket" "buckets" {
   depends_on = [google_project_service.required]
 }
 
-# Cloud Functions Gen2 のイベント通知に必要（GCS -> Pub/Sub publish）
 data "google_project" "current" {
   project_id = var.project_id
 }
@@ -38,7 +37,6 @@ locals {
   gcs_service_agent = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
 }
 
-# GCS通知用の Pub/Sub Topic（input用 / temp用）
 resource "google_pubsub_topic" "gcs_input_finalized" {
   name    = "gcs-input-finalized-${local.suffix}"
   project = var.project_id
@@ -53,14 +51,11 @@ resource "google_pubsub_topic" "gcs_temp_finalized" {
   depends_on = [google_project_service.required]
 }
 
-# GCS サービスアカウントに、各 Topic への publish 権限を付与（Topic IAM）
 resource "google_pubsub_topic_iam_member" "gcs_publish_input" {
   project = var.project_id
   topic   = google_pubsub_topic.gcs_input_finalized.name
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${local.gcs_service_agent}"
-
-  depends_on = [google_project_service.required]
 }
 
 resource "google_pubsub_topic_iam_member" "gcs_publish_temp" {
@@ -68,8 +63,6 @@ resource "google_pubsub_topic_iam_member" "gcs_publish_temp" {
   topic   = google_pubsub_topic.gcs_temp_finalized.name
   role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${local.gcs_service_agent}"
-
-  depends_on = [google_project_service.required]
 }
 
 # Artifact Registry（Cloud Functions Gen2 build 用）
@@ -156,8 +149,8 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       value     = google_storage_bucket.buckets["input"].name
     }
 
-    # ★ 追加：明示的に topic を指定（Topic IAM の publish 先）
     pubsub_topic = google_pubsub_topic.gcs_input_finalized.id
+
   }
 
   depends_on = [
@@ -206,8 +199,8 @@ resource "google_cloudfunctions2_function" "md_generator" {
       value     = google_storage_bucket.buckets["temp"].name
     }
 
-    # ★ 追加：明示的に topic を指定（Topic IAM の publish 先）
     pubsub_topic = google_pubsub_topic.gcs_temp_finalized.id
+
   }
 
   depends_on = [

@@ -59,6 +59,12 @@ resource "google_project_iam_member" "github_sa_editor" {
   member  = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+resource "google_project_iam_member" "github_sa_pubsub_admin" {
+  project = var.project_id
+  role    = "roles/pubsub.admin"
+  member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
 # -------------------------
 # 3) Workload Identity Pool / Provider
 # -------------------------
