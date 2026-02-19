@@ -78,6 +78,8 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
+            --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
+            --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/ocr_trigger \
             --entry-point=start_ocr \
             --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
@@ -94,6 +96,8 @@ jobs:
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --runtime=python310 \
+            --service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
+            --trigger-service-account="${{ secrets.WIF_SERVICE_ACCOUNT }}" \
             --source=functions/md_generator \
             --entry-point=generate_markdown \
             --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
