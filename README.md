@@ -1,21 +1,33 @@
-以下は、これまで整理した **bootstrap / infra 分離構成・Terraformのみで完結・DevContainer対応・GitHub Actions(WIF)対応** をすべて反映した
-`deep-book-ocr` 用 **README.md 完全版** です。
-そのままリポジトリに置き換えて使えます。
+最高です 👍
+今の最新構成（**srcレイアウト統一 / APP_ENV / Cloud Logging / pip-compile / Ruff / DevContainer / Gen2 / GCSイベントトリガー**）に合わせて README をアップデートします。
+
+そのまま置き換え可能な **最新版 README.md 完全版** を出します。
 
 ---
 
-# 📚 Deep Book OCR (GCP Edition)
+# 📚 Deep Book OCR (GCP Serverless Edition)
 
 Google Cloud Platform を活用し、
-**スキャンPDF → OCR → テキスト構造化 → Markdown生成** を行う
-サーバーレス自動パイプラインです。
 
-* Document AI：OCR
-* Cloud Functions Gen2：処理制御
-* Vertex AI（Gemini）：Markdown整形
-* Cloud Storage：ファイル管理
-* Terraform：完全IaC
-* GitHub Actions：CI/CD（WIF認証）
+**PDF → OCR → JSON → Markdown構造化 → AI整形**
+
+を行うサーバーレス自動パイプラインです。
+
+---
+
+## 🚀 使用技術
+
+| サービス                 | 役割         |
+| -------------------- | ---------- |
+| Document AI          | OCR        |
+| Cloud Functions Gen2 | 処理制御       |
+| Vertex AI (Gemini)   | Markdown整形 |
+| Cloud Storage        | ファイル管理     |
+| Terraform            | 完全IaC      |
+| GitHub Actions (WIF) | CI/CD      |
+| pip-tools            | 依存固定       |
+| Ruff                 | Lint       |
+| DevContainer         | ローカル開発     |
 
 ---
 
@@ -24,19 +36,19 @@ Google Cloud Platform を活用し、
 ```
 PDF Upload
    ↓
-Cloud Storage (input)
+Cloud Storage (input bucket)
    ↓
 Cloud Functions (ocr-trigger)
    ↓
 Document AI
    ↓
-Cloud Storage (temp JSON)
+Cloud Storage (JSON output)
    ↓
 Cloud Functions (md-generator)
    ↓
 Vertex AI (Gemini)
    ↓
-Cloud Storage (output Markdown)
+Cloud Storage (Markdown output)
 ```
 
 ---
@@ -45,60 +57,100 @@ Cloud Storage (output Markdown)
 
 ```
 deep-book-ocr/
-├── .devcontainer/                 # VSCode + Docker 開発環境
-├── .github/workflows/terraform.yml
-├── bootstrap/                     # API有効化専用 (state分離)
-│   ├── main.tf
-│   ├── variables.tf
-│   └── versions.tf
-├── infra/                         # 本体インフラ
-│   ├── main.tf
-│   ├── variables.tf
-│   └── versions.tf
+├── .devcontainer/
+├── .github/workflows/deploy-functions.yml
+├── bootstrap/
+├── infra/
 ├── functions/
 │   ├── ocr_trigger/
+│   │   ├── src/ocr_trigger/
+│   │   │   ├── config.py
+│   │   │   ├── entrypoint.py
+│   │   │   └── gcp_services.py
+│   │   ├── tests/
+│   │   ├── local_runner.py
+│   │   └── requirements.*
+│   │
 │   └── md_generator/
-├── files/                         # ZIP生成物（git管理しない）
-├── terraform.tfvars               # 環境変数（git管理しない）
-├── .gitignore
+│       ├── src/md_generator/
+│       │   ├── config.py
+│       │   ├── entrypoint.py
+│       │   ├── gcp_services.py
+│       │   └── markdown_logic.py
+│       ├── tests/
+│       ├── local_runner.py
+│       └── requirements.*
+│
+├── ruff.toml
+├── terraform.tfvars
 └── README.md
 ```
 
 ---
 
-# 🎯 この構成の設計思想
+# 🎯 設計方針
 
-## Terraformのみで完結
+## ✅ src構成統一（main.pyなし）
 
-* API有効化もTerraform
-* IAMもTerraform
-* WIFもTerraform
-* FunctionsもTerraform
+Cloud Functions Gen2 では `main.py` は必須ではありません。
 
-## bootstrap / infra 分離（ベストプラクティス）
+すべての関数は：
 
-| ディレクトリ    | 役割           |
-| --------- | ------------ |
-| bootstrap | API enableのみ |
-| infra     | 本体リソース       |
+```
+src/<package>/entrypoint.py
+```
 
-理由：
+にエントリポイントを統一。
 
-* API未有効状態だとIAM取得が403で落ちる
-* bootstrapで先にAPI有効化
-* infraで通常構築
+デプロイ時に：
+
+```
+--entry-point=generate_markdown
+--entry-point=start_ocr
+```
+
+を指定します。
+
+---
+
+## ✅ APP_ENV 切り替え
+
+| 環境   | APP_ENV |
+| ---- | ------- |
+| ローカル | local   |
+| 本番   | gcp     |
+
+### ログ挙動
+
+| APP_ENV | ログ            |
+| ------- | ------------- |
+| local   | 標準 logging    |
+| gcp     | Cloud Logging |
+
+---
+
+## ✅ STORAGE_MODE 切替（md_generator）
+
+| モード      | 説明              |
+| -------- | --------------- |
+| gcp      | 実GCS            |
+| emulator | fake-gcs-server |
+
+Vertex AI は常に実GCP（ADC利用）。
 
 ---
 
 # 🚀 初回セットアップ
 
-## ① 必須前提（手動）
+## ① 前提（手動）
 
-Terraformで唯一自動化できない部分：
+Terraformで自動化できないもの：
 
 * GCPプロジェクト作成
 * Billing有効化
-* tfstate用GCSバケット作成
+* tfstate用GCS作成
+
+例：
 
 ```
 deep-book-ocr-tfstate
@@ -117,21 +169,9 @@ tfstate_bucket    = "deep-book-ocr-tfstate"
 
 ---
 
-# 🧱 ローカル構築手順
+# 🧱 インフラ構築
 
-## DevContainer利用（推奨）
-
-VSCodeで：
-
-```
-Reopen in Container
-```
-
-Terraform / gcloud / Python が自動セットアップされます。
-
----
-
-## bootstrap 実行（API有効化）
+## bootstrap（API有効化）
 
 ```bash
 cd bootstrap
@@ -139,36 +179,21 @@ terraform init -reconfigure
 terraform apply -auto-approve -var-file=../terraform.tfvars
 ```
 
-有効化される主なAPI：
-
-* cloudresourcemanager
-* iam
-* serviceusage
-* storage
-* pubsub
-* cloudfunctions
-* artifactregistry
-* documentai
-* aiplatform
-* run
-* eventarc
-
 ---
 
-## infra 実行（本体構築）
+## infra（本体）
 
 ```bash
 cd ../infra
 terraform init -reconfigure
-terraform plan  -var-file=../terraform.tfvars -out=tfplan
-terraform apply -auto-approve tfplan
+terraform apply -auto-approve -var-file=../terraform.tfvars
 ```
 
 ---
 
 # 🔐 GitHub Actions (WIF)
 
-infra apply 後、Outputs を取得：
+Terraform apply 後：
 
 ```bash
 terraform output -raw wif_provider_name
@@ -177,77 +202,131 @@ terraform output -raw github_actions_service_account
 
 GitHub Secrets に設定：
 
-| Name                | Value   |
-| ------------------- | ------- |
-| WIF_PROVIDER        | output値 |
-| WIF_SERVICE_ACCOUNT | output値 |
+| Name                | Value      |
+| ------------------- | ---------- |
+| WIF_PROVIDER        | output値    |
+| WIF_SERVICE_ACCOUNT | output値    |
+| GCP_PROJECT_ID      | project_id |
+| GCP_REGION          | region     |
 
 ---
 
-# 🤖 CI/CD 自動デプロイ
+# 🤖 自動デプロイ
 
-push すると：
+push → GitHub Actions → Cloud Functions Gen2 再デプロイ
 
-1. bootstrap
-2. infra
-3. Functions再デプロイ
+エントリポイント：
 
-が自動実行されます。
+| Function     | entry_point       |
+| ------------ | ----------------- |
+| ocr-trigger  | start_ocr         |
+| md-generator | generate_markdown |
 
 ---
 
-# 📦 PDF処理方法
+# 🧪 ローカル開発
+
+## DevContainer（推奨）
+
+VSCode:
 
 ```
-deep-book-ocr-input
+Reopen in Container
 ```
 
-バケットへPDFアップロードするだけ。
+自動セットアップ：
 
-自動で：
-
-* OCR
-* JSON生成
-* Markdown変換
-* outputバケットへ保存
+* Python
+* Terraform
+* gcloud
+* pip-tools
 
 ---
 
-# 🧩 よくあるエラーと解決
+## ADC認証（Gemini用）
 
-## ① Cloud Resource Manager 403
-
-原因：
-API未有効
-
-解決：
-bootstrap を実行
-
----
-
-## ② WorkloadIdentityPool update 403
-
-原因：
-display_name変更で update 発生
-
-対策済：
-
-```
-ignore_changes = [display_name]
+```bash
+sudo chown -R vscode:vscode /home/vscode/.config/gcloud
+gcloud auth application-default login
 ```
 
 ---
 
-## ③ terraform provider permission denied
+# 🔍 ローカル関数実行
 
-原因：
-DevContainerのnoexecマウント
+## ocr_trigger
 
-対策済：
-
+```bash
+cd functions/ocr_trigger
+cp .env.example .env
+make install
+python local_runner.py
 ```
-TF_PLUGIN_CACHE_DIR=/tmp
+
+---
+
+## md_generator（Storageエミュ）
+
+```bash
+cd functions/md_generator
+cp .env.example .env
+make install
+python local_runner.py
 ```
+
+---
+
+# 🧪 テスト
+
+```bash
+make test
+```
+
+---
+
+# 🧹 Lint
+
+```bash
+make lint
+```
+
+---
+
+# 📦 依存管理
+
+## 依存追加時
+
+```bash
+# requirements.in 編集
+make compile
+make install
+```
+
+## 通常開発
+
+```bash
+make install
+```
+
+---
+
+# 🧩 よくあるエラー
+
+## 403 API未有効
+
+→ bootstrap実行
+
+---
+
+## Cloud Loggingが出ない
+
+→ APP_ENV=gcp が設定されているか確認
+
+---
+
+## emulatorでバケットが無い
+
+→ fake-gcs-server 起動確認
 
 ---
 
@@ -259,82 +338,25 @@ TF_PLUGIN_CACHE_DIR=/tmp
 roles/editor
 ```
 
-安定優先
-
-後で最小権限へ縮小可能：
-
-* storage.admin
-* artifactregistry.admin
-* cloudfunctions.admin
-* iam.serviceAccountUser
-* iam.workloadIdentityPoolAdmin
+将来的に最小権限へ縮小予定。
 
 ---
 
 # 💰 コスト注意
 
-主に課金対象：
+主な課金：
 
 * Document AI
-* Vertex AI (Gemini)
+* Vertex AI
 * Cloud Functions
 
-テスト時は小さいPDF推奨。
-
----
-
-# 🧪 ローカル関数テスト
-
-```bash
-cd functions/ocr_trigger
-functions-framework --target=start_ocr
-```
+テストは小さいPDF推奨。
 
 ---
 
 # 🧠 将来拡張
 
-* OCR結果の自動要約
-* 知識ベース化
-* RAG検索
+* OCR後の自動要約
+* RAG化
 * Notion連携
 * Kindle統合
-
----
-
-# 👨‍💻 開発者向けメモ
-
-## ZIP再生成トリガ
-
-Functionsは md5 変更で自動更新。
-
----
-
-## state構成
-
-```
-bootstrap state
-infra state
-```
-
-分離により安全。
-
----
-
-# 📄 ライセンス
-
-Private project
-
----
-
-# ✨ 最終まとめ
-
-このリポジトリは：
-
-* Terraform完全自動化
-* GCPサーバーレス
-* OCR + AIパイプライン
-* GitHub Actions自動デプロイ
-* WIFによる鍵レス認証
-
-までを **本番レベル構成** で実現しています。

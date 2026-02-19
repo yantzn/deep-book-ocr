@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   app:
     build:
@@ -6,6 +7,30 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspace:cached
-    command: /bin/sh -c "while sleep 1000; do :; done"
+      # gcloud ADC を永続化（毎回 login しない）
+      - gcloud-config:/home/vscode/.config/gcloud
     environment:
       - GCP_PROJECT_ID=deep-book-ocr
+      # md_generator の Storage エミュ向け（compose内 hostname を使う）
+      - GCS_EMULATOR_HOST=http://fake-gcs:4443
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    depends_on:
+      - fake-gcs
+
+  # Storage だけローカル化するための GCS emulator
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    ports:
+      - "4443:4443"
+    command:
+      - "-scheme"
+      - "http"
+      - "-port"
+      - "4443"
+      - "-external-url"
+      - "http://localhost:4443"
+      - "-public-host"
+      - "localhost"
+
+volumes:
+  gcloud-config:

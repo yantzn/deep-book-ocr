@@ -1,81 +1,62 @@
-# local_runner.py
+"""ocr_trigger の CloudEvent シミュレーション用ローカルランナー。
+
+目的:
+- 本番と同じ start_ocr エントリポイントをローカルで検証
+- GCS finalize イベント相当の入力を手元で再現
+"""
+
 import os
 import sys
-from unittest.mock import MagicMock
 from cloudevents.http import CloudEvent
 
-# Add the src directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
 
-from ocr_trigger.main import start_ocr
+def _bootstrap_env() -> None:
+    """entrypoint import前に必要な環境変数の既定値を設定する。"""
+    os.environ.setdefault("APP_ENV", "local")
+    os.environ.setdefault("GCP_PROJECT_ID", "deep-book-ocr")
+    os.environ.setdefault("PROCESSOR_LOCATION", "us")
+    os.environ.setdefault("PROCESSOR_ID", "YOUR_PROCESSOR_ID")
+    os.environ.setdefault("TEMP_BUCKET", "gs://deep-book-ocr-temp")
+
+
+# src ディレクトリを Python path に追加
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "src")))
+
+_bootstrap_env()
+
+# ✅ 正しいエントリポイントに修正
+from ocr_trigger.entrypoint import start_ocr  # noqa: E402
 
 
 def run_local():
     """
-    Simulates a CloudEvent and calls the main function handler.
-    This is for local testing purposes.
+    CloudEvent を疑似生成し、関数ハンドラを呼び出す。
+
+    実行ステップ:
+    1. OCR実行に必要な環境変数のデフォルトを設定
+    2. PDFアップロード相当の CloudEvent を組み立て
+    3. start_ocr() を呼び出して結果を返す
+    NOTE: Document AI の入出力には実GCS（gs://）が必要。
+    ローカル検証時は、PDFを実バケットに配置して bucket/name を指定する。
     """
-    # --- Configuration for the local run ---
-    # Set environment variables for the function to use.
-    # In a real scenario, these would be set in your cloud environment.
-    os.environ["GCP_PROJECT_ID"] = "your-gcp-project-id"
-    os.environ["PROCESSOR_LOCATION"] = "us"  # e.g., 'us' or 'eu'
-    os.environ["PROCESSOR_ID"] = "your-processor-id"
-    os.environ["TEMP_BUCKET"] = "gs://your-temp-bucket-for-json-output"
+    # import前に既定値を適用済み（必要なら実行時に上書き可能）
 
-    # The "event" payload that the function will receive.
-    # This simulates a file being uploaded to GCS.
-    bucket_name = "your-source-bucket"
-    file_name = "sample.pdf"  # This file should exist in `local_input`
+    event = CloudEvent(
+        attributes={
+            "type": "google.cloud.storage.object.v1.finalized",
+            "source": "//storage.googleapis.com/projects/_/buckets/example",
+            "id": "local-test-id",
+            "specversion": "1.0",
+        },
+        data={
+            "bucket": "YOUR_REAL_INPUT_BUCKET",
+            "name": "path/to/your.pdf",
+        },
+    )
 
-    print("--- Starting local execution of start_ocr function ---")
-    print(f"Simulating event for file: {file_name} in bucket: {bucket_name}")
-    print("Using environment variables for configuration:")
-    print(f"  PROJECT_ID: {os.environ.get('GCP_PROJECT_ID')}")
-    print(f"  LOCATION: {os.environ.get('PROCESSOR_LOCATION')}")
-    print(f"  PROCESSOR_ID: {os.environ.get('PROCESSOR_ID')}")
-    print(f"  TEMP_BUCKET: {os.environ.get('TEMP_BUCKET')}")
-    print("-" * 20)
-
-    # Create a mock CloudEvent
-    attributes = {
-        "type": "google.cloud.storage.object.v1.finalized",
-        "source": f"//storage.googleapis.com/projects/_/buckets/{bucket_name}",
-        "subject": file_name,
-    }
-    data = {"bucket": bucket_name, "name": file_name}
-    event = CloudEvent(attributes, data)
-
-    # In a local test, you might not want to make real API calls.
-    # You can mock the service like in the tests.
-    # For a true integration test, you would need to be authenticated to GCP.
-    try:
-        # For this example, we'll just print the call instead of making it.
-        # To run for real, remove the mocking.
-        with MagicMock() as mock_docai_service:
-            from ocr_trigger.main import docai_service
-            docai_service.start_ocr_batch_job = mock_docai_service.start_ocr_batch_job
-
-            result, status_code = start_ocr(event)
-
-            print(f"Function returned: {result} (Status code: {status_code})")
-
-            if mock_docai_service.start_ocr_batch_job.called:
-                print("
-Successfully called the Document AI service with:")
-                print(f"  Bucket: {mock_docai_service.start_ocr_batch_job.call_args.args[0]}")
-                print(f"  File Name: {mock_docai_service.start_ocr_batch_job.call_args.args[1]}")
-            else:
-                print("
-Document AI service was not called.")
-
-    except Exception as e:
-        print(f"
-An error occurred during execution: {e}")
-
-    print("
---- Local execution finished ---")
+    return start_ocr(event)
 
 
 if __name__ == "__main__":
-    run_local()
+    print(run_local())

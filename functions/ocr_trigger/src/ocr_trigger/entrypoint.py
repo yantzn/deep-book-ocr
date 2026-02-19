@@ -1,24 +1,58 @@
-# src/ocr_trigger/main.py
+from __future__ import annotations
+
 import logging
+
 import functions_framework
 from cloudevents.http import CloudEvent
 
-from . import config
-from . import gcp_services
+from . import config, gcp_services
 
-# Initialize services with cached settings
+"""
+責務:
+- GCS finalize イベントから入力PDFを特定
+- PDF以外を除外
+- Document AI バッチOCRを起動
+"""
+
+logger = logging.getLogger(__name__)
+
+
+def setup_logging(settings: config.Settings) -> None:
+    # 既にハンドラがある環境（Functions/pytest等）では二重追加しない
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+
+    if settings.app_env.lower() == "gcp":
+        # Cloud Logging は gcp のときだけ import（ローカルのimport失敗を防ぐ）
+        try:
+            import google.cloud.logging as cloud_logging  # noqa: WPS433
+
+            cloud_logging.Client().setup_logging()
+            logger.info("Cloud Logging initialized")
+        except Exception:
+            logger.exception("Failed to initialize Cloud Logging")
+
+
+# モジュールロード時に一度だけ初期化（Functionsのベストプラクティス）
 settings = config.get_settings()
-docai_service = gcp_services.DocumentAIService(settings)
-
-logging.basicConfig(level=logging.INFO)
+setup_logging(settings)
+services = gcp_services.build_services(settings)
 
 
 @functions_framework.cloud_event
 def start_ocr(cloud_event: CloudEvent):
     """
-    Cloud Function entry point that triggers the OCR process.
+    OCR処理を起動する Cloud Function のエントリポイント。
+    GCS finalize イベント（PDFアップロード）で起動される。
 
-    This function is triggered by a CloudEvent (e.g., a file upload to GCS).
+    処理ステップ:
+    1. イベントから bucket/name を取得
+    2. 拡張子が .pdf かを検証
+    3. DocumentAIService 経由で OCR ジョブを開始
     """
     try:
         data = cloud_event.data
@@ -26,16 +60,16 @@ def start_ocr(cloud_event: CloudEvent):
         name = data["name"]
 
         if not name.lower().endswith(".pdf"):
-            logging.info(f"Skipping non-PDF file: {name}")
-            return "Skipped non-PDF file.", 200
+            logger.info("PDF以外のためスキップします: %s", name)
+            return "PDF以外のためスキップしました。", 200
 
-        docai_service.start_ocr_batch_job(bucket, name)
-
-        return "OCR process started successfully.", 200
+        services.docai_service.start_ocr_batch_job(bucket, name)
+        return "OCR処理を開始しました。", 200
 
     except KeyError as e:
-        logging.error(f"Invalid CloudEvent data. Missing key: {e}")
-        return f"Bad Request: Missing data in CloudEvent: {e}", 400
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
-        return "Internal Server Error", 500
+        logger.error("CloudEventデータが不正です。欠損キー: %s", e)
+        return f"不正なリクエスト: CloudEventのデータが不足しています: {e}", 400
+
+    except Exception:
+        logger.exception("想定外のエラーが発生しました")
+        return "サーバー内部エラー", 500
