@@ -8,7 +8,8 @@
       "extensions": [
         "ms-python.python",
         "hashicorp.terraform",
-        "googlecloudtools.cloudcode"
+        "googlecloudtools.cloudcode",
+        "charliermarsh.ruff"
       ]
     }
   },

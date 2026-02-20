@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   app:
     build:
@@ -6,6 +7,11 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspace:cached
-    command: /bin/sh -c "while sleep 1000; do :; done"
+      # gcloud ADC を永続化（毎回 login しない）
+      - gcloud-config:/home/vscode/.config/gcloud
     environment:
       - GCP_PROJECT_ID=deep-book-ocr
+    command: /bin/sh -c "while sleep 1000; do :; done"
+
+volumes:
+  gcloud-config:

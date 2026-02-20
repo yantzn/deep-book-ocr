@@ -1,0 +1,7 @@
+functions-framework
+cloudevents
+pydantic-settings
+google-cloud-storage
+google-cloud-aiplatform
+google-cloud-logging
+python-dotenv
