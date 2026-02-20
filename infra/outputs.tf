@@ -21,3 +21,11 @@ output "output_bucket" {
 output "source_bucket" {
   value = google_storage_bucket.buckets["source"].name
 }
+
+output "documentai_service_agent_email_effective" {
+  value = local.effective_documentai_service_agent_email
+}
+
+output "documentai_bucket_iam_enabled" {
+  value = var.enable_documentai_bucket_iam
+}
