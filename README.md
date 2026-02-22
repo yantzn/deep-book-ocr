@@ -205,7 +205,7 @@ terraform apply -auto-approve -var-file=../terraform.tfvars
 ```bash
 terraform output -raw input_bucket
 terraform output -raw temp_bucket
-terraform output -raw documentai_service_agent_email_effective
+terraform output documentai_service_agent_emails_effective
 ```
 
 実行主体を手動指定したい場合:
