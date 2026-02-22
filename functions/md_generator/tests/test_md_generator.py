@@ -9,6 +9,7 @@
 import json
 from cloudevents.http import CloudEvent
 
+import md_generator.entrypoint as entrypoint
 from md_generator.entrypoint import generate_markdown
 
 
@@ -28,13 +29,8 @@ def _sample_docai_json() -> dict:
     }
 
 
-def test_generate_markdown_success(mock_storage, mock_gemini, monkeypatch):
+def test_generate_markdown_success(mock_storage, mock_gemini):
     """正常系: JSONを処理して生成した markdown をアップロードする。"""
-    monkeypatch.setenv("STORAGE_MODE", "emulator")
-    monkeypatch.setenv("EMULATOR_INPUT_BUCKET", "temp-local")
-    monkeypatch.setenv("EMULATOR_OUTPUT_BUCKET", "output-local")
-    monkeypatch.setenv("OUTPUT_BUCKET", "ignored")
-
     mock_storage.download_bytes.return_value = json.dumps(
         _sample_docai_json()).encode("utf-8")
     mock_gemini.to_markdown.side_effect = ["# MD1", "# MD2"]
@@ -52,7 +48,7 @@ def test_generate_markdown_success(mock_storage, mock_gemini, monkeypatch):
     # upload が1回呼ばれる
     assert mock_storage.upload_text.call_count == 1
     args, kwargs = mock_storage.upload_text.call_args
-    assert args[0] == "output-local"  # エミュレータ出力バケット
+    assert args[0] == entrypoint.settings.output_bucket
     assert args[1] == "sample.md"     # "sample_pdf" から導出
     assert "# MD1" in args[2]
 

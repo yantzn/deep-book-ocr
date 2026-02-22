@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
@@ -55,10 +55,10 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
     """
     トリガー: GCS finalize イベント（Document AI のJSON出力）。
 
-    - GCS から JSON を読み込む（STORAGE_MODE=emulator 時はエミュレータバケット）
+    - GCS から JSON を読み込む
     - OCRテキストをページ単位でチャンク抽出
     - Gemini で markdown 形式へ整形
-    - 出力バケット（またはエミュレータ出力バケット）へ保存
+    - 出力バケットへ保存
 
     実装上の意図:
     - 失敗時は 400/500 を返して再試行判断をしやすくする
@@ -73,9 +73,8 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
             logger.info("JSON以外のためスキップします: %s", name)
             return ("JSON以外のためスキップしました。", 200)
 
-        # Storage接続先のみを切り替える
-        in_bucket = settings.emulator_input_bucket if settings.use_emulator else bucket
-        out_bucket = settings.emulator_output_bucket if settings.use_emulator else settings.output_bucket
+        in_bucket = bucket
+        out_bucket = settings.output_bucket
 
         logger.info("入力: bucket=%s name=%s (解決後bucket=%s)",
                     bucket, name, in_bucket)

@@ -7,16 +7,48 @@
 
 import os
 import sys
-from cloudevents.http import CloudEvent
+
+
+def _ensure_venv_python() -> None:
+    """システムPython実行時は .venv のPythonで再実行する。"""
+    base_dir = os.path.dirname(__file__)
+    venv_python = os.path.join(base_dir, ".venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return
+
+    in_venv = (sys.prefix != getattr(sys, "base_prefix", sys.prefix)) or bool(
+        os.environ.get("VIRTUAL_ENV")
+    )
+    if in_venv:
+        return
+
+    os.execv(venv_python, [venv_python, __file__, *sys.argv[1:]])
+
+
+_ensure_venv_python()
 
 
 def _bootstrap_env() -> None:
-    """entrypoint import前に必要な環境変数の既定値を設定する。"""
-    os.environ.setdefault("APP_ENV", "local")
-    os.environ.setdefault("GCP_PROJECT_ID", "deep-book-ocr")
-    os.environ.setdefault("PROCESSOR_LOCATION", "us")
-    os.environ.setdefault("PROCESSOR_ID", "YOUR_PROCESSOR_ID")
-    os.environ.setdefault("TEMP_BUCKET", "gs://deep-book-ocr-temp")
+    """.env を読み込み、必須キーの存在を検証する。"""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ModuleNotFoundError:
+        pass
+
+    required_keys = [
+        "APP_ENV",
+        "GCP_PROJECT_ID",
+        "PROCESSOR_LOCATION",
+        "PROCESSOR_ID",
+        "TEMP_BUCKET",
+    ]
+    missing = [key for key in required_keys if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError(
+            f".env に必須キーが不足しています: {', '.join(missing)}"
+        )
 
 
 # src ディレクトリを Python path に追加
@@ -40,7 +72,22 @@ def run_local():
     NOTE: Document AI の入出力には実GCS（gs://）が必要。
     ローカル検証時は、PDFを実バケットに配置して bucket/name を指定する。
     """
+    from cloudevents.http import CloudEvent
+
     # import前に既定値を適用済み（必要なら実行時に上書き可能）
+    input_bucket = os.environ.get("LOCAL_INPUT_BUCKET", "").strip()
+    input_object = os.environ.get("LOCAL_INPUT_OBJECT", "").strip()
+
+    if not input_bucket or not input_object:
+        raise RuntimeError(
+            "LOCAL_INPUT_BUCKET と LOCAL_INPUT_OBJECT を .env に設定してください。"
+        )
+
+    if ":" in input_object or "\\" in input_object or input_object.startswith("/"):
+        raise RuntimeError(
+            "LOCAL_INPUT_OBJECT にはローカルファイルパスではなく、"
+            "GCS上のオブジェクト名（例: uploads/test.pdf）を指定してください。"
+        )
 
     event = CloudEvent(
         attributes={
@@ -50,8 +97,8 @@ def run_local():
             "specversion": "1.0",
         },
         data={
-            "bucket": "YOUR_REAL_INPUT_BUCKET",
-            "name": "path/to/your.pdf",
+            "bucket": input_bucket,
+            "name": input_object,
         },
     )
 

@@ -2,15 +2,13 @@
 
 目的:
 - 本番関数と同じ entrypoint をローカルから直接呼び出し
-- イベント形状と環境変数の最小セットを再現
+- 実GCS の finalize イベント相当入力を手元で再現
 """
 
-from google.cloud import storage
-from google.auth.credentials import AnonymousCredentials
-from cloudevents.http import CloudEvent
-import json
 import os
 import sys
+
+from cloudevents.http import CloudEvent
 
 
 def _ensure_venv_python() -> None:
@@ -35,14 +33,10 @@ _ensure_venv_python()
 def _bootstrap_env() -> None:
     """entrypoint import前に必要な環境変数の既定値を設定する。"""
     os.environ.setdefault("APP_ENV", "local")
-    os.environ.setdefault("STORAGE_MODE", "emulator")
     os.environ.setdefault("GCP_PROJECT_ID", "deep-book-ocr")
     os.environ.setdefault("GCP_LOCATION", "us-central1")
     os.environ.setdefault("MODEL_NAME", "gemini-1.5-pro")
     os.environ.setdefault("CHUNK_SIZE", "10")
-    os.environ.setdefault("GCS_EMULATOR_HOST", "http://localhost:4443")
-    os.environ.setdefault("EMULATOR_INPUT_BUCKET", "temp-local")
-    os.environ.setdefault("EMULATOR_OUTPUT_BUCKET", "output-local")
     os.environ.setdefault("OUTPUT_BUCKET", "deep-book-ocr-output")
 
 
@@ -55,64 +49,32 @@ _bootstrap_env()
 from md_generator.entrypoint import generate_markdown  # noqa: E402
 
 
-def _seed_emulator_input() -> None:
-    """エミュレータ用の入力JSONが無い場合に最小サンプルを投入する。"""
-    if os.environ.get("STORAGE_MODE", "emulator").lower() != "emulator":
-        return
-
-    bucket = os.environ.get("EMULATOR_INPUT_BUCKET", "temp-local")
-    object_name = "processed/sample_pdf/0.json"
-    emulator_host = os.environ.get(
-        "GCS_EMULATOR_HOST", "http://localhost:4443")
-
-    client = storage.Client(
-        project="local",
-        client_options={"api_endpoint": emulator_host},
-        credentials=AnonymousCredentials(),
-    )
-
-    bucket_ref = client.bucket(bucket)
-    if not bucket_ref.exists():
-        bucket_ref.create()
-
-    blob = bucket_ref.blob(object_name)
-    if blob.exists():
-        return
-
-    sample_docai = {
-        "text": "hello world",
-        "pages": [
-            {"layout": {"textAnchor": {"textSegments": [
-                {"startIndex": 0, "endIndex": 5}]}}},
-            {"layout": {"textAnchor": {"textSegments": [
-                {"startIndex": 6, "endIndex": 11}]}}},
-        ],
-    }
-    blob.upload_from_string(json.dumps(sample_docai),
-                            content_type="application/json")
-
-
 def run_local():
     """
     CloudEvent を疑似生成し、関数ハンドラを呼び出す。
 
     実行ステップ:
     1. ローカル向けデフォルト環境変数を設定
-    2. GCS finalize 相当の CloudEvent を構築
+    2. 実GCS finalize 相当の CloudEvent を構築
     3. generate_markdown() を呼び出し結果を返却
 
-     推奨するローカルデバッグモード:
-    1) STORAGE_MODE=emulator:
-         - JSONを fake-gcs-server のバケット（EMULATOR_INPUT_BUCKET）へ配置
-         - 出力は EMULATOR_OUTPUT_BUCKET へ保存
-         - Gemini は ADC を使って実GCPへ接続
-
-    2) STORAGE_MODE=gcp:
-         - 実GCSからJSONを読み込み、実GCSへ書き込む
+    NOTE:
+    - LOCAL_INPUT_OBJECT にはローカルパスではなく、
+      GCS上のオブジェクト名（例: processed/sample_pdf/0.json）を指定する。
     """
-    # import前に既定値を適用済み（必要なら実行時に上書き可能）
+    input_bucket = os.environ.get("LOCAL_INPUT_BUCKET", "").strip()
+    input_object = os.environ.get("LOCAL_INPUT_OBJECT", "").strip()
 
-    _seed_emulator_input()
+    if not input_bucket or not input_object:
+        raise RuntimeError(
+            "LOCAL_INPUT_BUCKET と LOCAL_INPUT_OBJECT を .env に設定してください。"
+        )
+
+    if ":" in input_object or "\\" in input_object or input_object.startswith("/"):
+        raise RuntimeError(
+            "LOCAL_INPUT_OBJECT にはローカルファイルパスではなく、"
+            "GCS上のオブジェクト名（例: processed/sample_pdf/0.json）を指定してください。"
+        )
 
     event = CloudEvent(
         attributes={
@@ -122,9 +84,8 @@ def run_local():
             "specversion": "1.0",
         },
         data={
-            # STORAGE_MODE=emulator の場合、bucketは entrypoint 内で EMULATOR_INPUT_BUCKET に差し替えられる
-            "bucket": "ignored-in-emulator",
-            "name": "processed/sample_pdf/0.json",
+            "bucket": input_bucket,
+            "name": input_object,
         },
     )
     return generate_markdown(event)

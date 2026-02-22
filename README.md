@@ -129,12 +129,12 @@ src/<package>/entrypoint.py
 
 ---
 
-## ✅ STORAGE_MODE 切替（md_generator）
+## ✅ ローカル実行方針（実GCS）
 
-| モード      | 説明              |
-| -------- | --------------- |
-| gcp      | 実GCS            |
-| emulator | fake-gcs-server |
+ローカル実行時も Storage は実GCSを利用します。
+
+- `ocr_trigger`: 実GCS上の PDF を入力
+- `md_generator`: 実GCS上の Document AI JSON を入力
 
 Vertex AI は常に実GCP（ADC利用）。
 
@@ -179,6 +179,12 @@ terraform init -reconfigure
 terraform apply -auto-approve -var-file=../terraform.tfvars
 ```
 
+確認用（Document AIサービスエージェント）:
+
+```bash
+terraform output documentai_service_agent_email
+```
+
 ---
 
 ## infra（本体）
@@ -188,6 +194,34 @@ cd ../infra
 terraform init -reconfigure
 terraform apply -auto-approve -var-file=../terraform.tfvars
 ```
+
+`infra` ではデフォルトで Document AI SA に次の IAM を同時付与します。
+
+- input バケット: `roles/storage.objectViewer`
+- temp バケット: `roles/storage.objectCreator`
+
+確認:
+
+```bash
+terraform output -raw input_bucket
+terraform output -raw temp_bucket
+terraform output -raw documentai_service_agent_email_effective
+```
+
+実行主体を手動指定したい場合:
+
+```bash
+terraform apply -auto-approve -var-file=../terraform.tfvars \
+   -var="documentai_service_agent_email_override=service-<PROJECT_NUMBER>@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
+```
+
+実行順は次の 3 段階です。
+
+1. `bootstrap`（API有効化）
+2. `infra`（input/temp/output バケット作成 + Document AI バケットIAM付与）
+3. 必要時のみ `infra` を override 指定で再適用（手動指定）
+
+通常運用では `bootstrap` を再実行する必要はありません。
 
 ---
 
@@ -254,6 +288,11 @@ gcloud auth application-default login
 
 # 🔍 ローカル関数実行
 
+前提:
+
+- ADCログイン済み
+- 実GCSに入力ファイルが配置済み
+
 ## ocr_trigger
 
 ```bash
@@ -263,9 +302,29 @@ make install
 python local_runner.py
 ```
 
+`.env` の最低限設定例:
+
+```dotenv
+APP_ENV=local
+GCP_PROJECT_ID=deep-book-ocr
+PROCESSOR_LOCATION=us
+PROCESSOR_ID=<DocumentAI Processor ID>
+TEMP_BUCKET=gs://deep-book-ocr-temp-2538d0
+LOCAL_INPUT_BUCKET=deep-book-ocr-input-2538d0
+LOCAL_INPUT_OBJECT=uploads/test.pdf
+```
+
+ローカルPDFは事前に実GCSへアップロード:
+
+```bash
+gcloud storage cp /path/to/test.pdf gs://deep-book-ocr-input-2538d0/uploads/test.pdf
+```
+
+`LOCAL_INPUT_OBJECT` はローカルパスではなく、バケット内オブジェクト名を指定してください。
+
 ---
 
-## md_generator（Storageエミュ）
+## md_generator
 
 ```bash
 cd functions/md_generator
@@ -273,6 +332,27 @@ cp .env.example .env
 make install
 python local_runner.py
 ```
+
+`.env` の最低限設定例:
+
+```dotenv
+APP_ENV=local
+GCP_PROJECT_ID=deep-book-ocr
+GCP_LOCATION=us-central1
+OUTPUT_BUCKET=deep-book-ocr-output-2538d0
+LOCAL_INPUT_BUCKET=deep-book-ocr-temp-2538d0
+LOCAL_INPUT_OBJECT=processed/sample_pdf/0.json
+MODEL_NAME=gemini-1.5-flash
+CHUNK_SIZE=10
+```
+
+`LOCAL_INPUT_OBJECT` は Document AI 出力JSONのオブジェクト名を指定してください。
+
+推奨実行順:
+
+1. `ocr_trigger` を実行して Document AI ジョブを起動
+2. `TEMP_BUCKET` に生成された JSON パスを確認
+3. その JSON パスを `md_generator` の `LOCAL_INPUT_OBJECT` に設定して実行
 
 ---
 
@@ -324,9 +404,9 @@ make install
 
 ---
 
-## emulatorでバケットが無い
+## GCSオブジェクトが見つからない
 
-→ fake-gcs-server 起動確認
+→ `LOCAL_INPUT_BUCKET` / `LOCAL_INPUT_OBJECT` と、実バケット上の配置を確認
 
 ---
 

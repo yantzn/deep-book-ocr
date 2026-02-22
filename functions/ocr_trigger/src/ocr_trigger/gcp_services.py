@@ -6,6 +6,8 @@ entrypoint から直接API詳細を分離し、責務を明確化する。
 """
 
 import logging
+from dataclasses import dataclass
+
 from google.cloud import documentai_v1 as documentai
 
 from .config import Settings
@@ -48,13 +50,15 @@ class DocumentAIService:
 
         output_uri = f"{self.settings.temp_bucket_uri()}{file_name}_json/"
         output_config = documentai.DocumentOutputConfig(
-            gcs_output_config=documentai.GcsOutputConfig(gcs_uri=output_uri)
+            gcs_output_config=documentai.DocumentOutputConfig.GcsOutputConfig(
+                gcs_uri=output_uri
+            )
         )
 
         request = documentai.BatchProcessRequest(
             name=resource_name,
-            input_configs=[input_config],
-            output_config=output_config,
+            input_documents=input_config,
+            document_output_config=output_config,
         )
 
         try:
@@ -65,3 +69,13 @@ class DocumentAIService:
         except Exception:
             logger.exception("OCRジョブの開始に失敗しました")
             raise
+
+
+@dataclass(frozen=True)
+class Services:
+    docai_service: DocumentAIService
+
+
+def build_services(settings: Settings) -> Services:
+    """entrypoint で使用するサービス群を構築して返す。"""
+    return Services(docai_service=DocumentAIService(settings))
