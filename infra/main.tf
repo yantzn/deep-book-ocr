@@ -39,10 +39,10 @@ locals {
   documentai_service_agent_email  = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
   documentai_service_agent_emails_effective = var.documentai_service_agent_email_override != "" ? [
     var.documentai_service_agent_email_override,
-    ] : [
-    "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com",
-    "service-${data.google_project.current.number}@gcp-sa-documentai.iam.gserviceaccount.com",
-  ]
+    ] : distinct(concat(
+      [local.documentai_service_agent_email],
+      var.documentai_service_agent_emails_additional,
+  ))
 }
 
 resource "google_storage_bucket_iam_member" "documentai_input_bucket_object_viewer" {
