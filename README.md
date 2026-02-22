@@ -215,6 +215,13 @@ terraform apply -auto-approve -var-file=../terraform.tfvars \
    -var="documentai_service_agent_email_override=service-<PROJECT_NUMBER>@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
 ```
 
+追加候補へも IAM を付けたい場合（任意）:
+
+```bash
+terraform apply -auto-approve -var-file=../terraform.tfvars \
+   -var='documentai_service_agent_emails_additional=["service-<PROJECT_NUMBER>@gcp-sa-documentai.iam.gserviceaccount.com"]'
+```
+
 実行順は次の 3 段階です。
 
 1. `bootstrap`（API有効化）

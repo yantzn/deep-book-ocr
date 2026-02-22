@@ -44,3 +44,9 @@ variable "documentai_service_agent_email_override" {
   type        = string
   default     = ""
 }
+
+variable "documentai_service_agent_emails_additional" {
+  description = "自動算出に追加でIAM付与する Document AI サービスエージェント一覧（必要時のみ指定）"
+  type        = list(string)
+  default     = []
+}
