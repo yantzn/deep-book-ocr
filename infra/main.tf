@@ -34,26 +34,31 @@ data "google_project" "current" {
 }
 
 locals {
-  gcs_service_agent                        = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
-  functions_build_service_account          = "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
-  documentai_service_agent_email           = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
-  effective_documentai_service_agent_email = var.documentai_service_agent_email_override != "" ? var.documentai_service_agent_email_override : local.documentai_service_agent_email
+  gcs_service_agent               = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
+  documentai_service_agent_email  = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
+  documentai_service_agent_emails_effective = var.documentai_service_agent_email_override != "" ? [
+    var.documentai_service_agent_email_override,
+    ] : [
+    "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com",
+    "service-${data.google_project.current.number}@gcp-sa-documentai.iam.gserviceaccount.com",
+  ]
 }
 
 resource "google_storage_bucket_iam_member" "documentai_input_bucket_object_viewer" {
-  count = var.enable_documentai_bucket_iam ? 1 : 0
+  for_each = var.enable_documentai_bucket_iam ? toset(local.documentai_service_agent_emails_effective) : toset([])
 
   bucket = google_storage_bucket.buckets["input"].name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${local.effective_documentai_service_agent_email}"
+  member = "serviceAccount:${each.key}"
 }
 
 resource "google_storage_bucket_iam_member" "documentai_temp_bucket_object_creator" {
-  count = var.enable_documentai_bucket_iam ? 1 : 0
+  for_each = var.enable_documentai_bucket_iam ? toset(local.documentai_service_agent_emails_effective) : toset([])
 
   bucket = google_storage_bucket.buckets["temp"].name
   role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${local.effective_documentai_service_agent_email}"
+  member = "serviceAccount:${each.key}"
 }
 
 resource "google_pubsub_topic" "gcs_input_finalized" {
