@@ -14,3 +14,8 @@ output "wif_provider_name" {
 output "wif_pool_name" {
   value = google_iam_workload_identity_pool.pool.name
 }
+
+output "documentai_service_agent_email" {
+  description = "project_id から自動算出した Document AI サービスエージェント"
+  value       = local.documentai_service_agent_email
+}

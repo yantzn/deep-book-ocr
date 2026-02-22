@@ -26,6 +26,15 @@ locals {
   wif_provider_id = "github-provider-${local.suffix}"
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+locals {
+  # Document AI 管理サービスエージェント
+  documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
+}
+
 # -------------------------
 # 1) Terraform state bucket (GCS backend 用)
 # -------------------------

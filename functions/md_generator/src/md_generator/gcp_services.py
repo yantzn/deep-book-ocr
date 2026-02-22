@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import vertexai
-from google.auth.credentials import AnonymousCredentials
 from google.cloud import storage
 from vertexai.generative_models import GenerativeModel, Part
 
@@ -34,36 +32,24 @@ MD_CONTENT_TYPE = "text/markdown"
 
 class StorageClient:
     """
-    接続先を切り替え可能な Storage アダプタ。
-    - 実GCS（デフォルト）
-    - fake-gcs-server（STORAGE_MODE=emulator の場合）
+    実GCS用の Storage アダプタ。
     """
 
     def __init__(self, settings: Settings):
-        self._emulator = settings.use_emulator
-        if settings.use_emulator:
-            self.client = storage.Client(
-                project="local",
-                client_options={"api_endpoint": settings.gcs_emulator_host},
-                credentials=AnonymousCredentials(),
-            )
-        else:
-            self.client = storage.Client(project=settings.gcp_project_id)
-
-    def _ensure_bucket(self, bucket_name: str) -> None:
-        """エミュレータ利用時にバケットを必要に応じて作成する。"""
-        b = self.client.bucket(bucket_name)
-        if not b.exists():
-            b.create()
+        self.client = storage.Client(project=settings.gcp_project_id)
 
     def download_bytes(self, bucket: str, name: str) -> bytes:
-        """選択中のStorage接続先からオブジェクトを bytes で取得する。"""
+        """実GCSからオブジェクトを bytes で取得する。"""
         blob = self.client.bucket(bucket).blob(name)
         return blob.download_as_bytes()
 
-    def upload_text(self, bucket: str, name: str, text: str, content_type: str = MD_CONTENT_TYPE) -> None:
-        if self._emulator:
-            self._ensure_bucket(bucket)
+    def upload_text(
+        self,
+        bucket: str,
+        name: str,
+        text: str,
+        content_type: str = MD_CONTENT_TYPE,
+    ) -> None:
         blob = self.client.bucket(bucket).blob(name)
         blob.upload_from_string(text, content_type=content_type)
 
