@@ -410,6 +410,13 @@ make install
 
 ---
 
+## Terraform state lock エラー（CI）
+
+`Error acquiring the state lock` が出た場合は、同時実行ジョブの完了を待って再実行してください。
+長時間残る stale lock の場合のみ、`infra` ディレクトリで `terraform force-unlock <LOCK_ID>` を実施します。
+
+---
+
 # 🔒 セキュリティ
 
 現在：

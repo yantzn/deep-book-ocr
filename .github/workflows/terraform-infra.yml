@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: terraform-infra-${{ github.ref }}
+  group: terraform-infra-state
   cancel-in-progress: false
 
 permissions:
@@ -83,7 +83,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=terraform.tfvars
+        run: terraform plan -lock-timeout=5m -var-file=terraform.tfvars
 
   apply:
     name: Terraform Apply (infra / main)
@@ -137,8 +137,8 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
-        run: terraform plan -var-file=terraform.tfvars -out=tfplan
+        run: terraform plan -lock-timeout=5m -var-file=terraform.tfvars -out=tfplan
 
       - name: Apply (infra)
         working-directory: infra
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -lock-timeout=5m -auto-approve tfplan
