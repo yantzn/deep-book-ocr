@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+"""
+Document AI バッチOCR用のGCPサービスラッパー。
+
+entrypoint から直接API詳細を分離し、責務を明確化する。
+"""
+
 import logging
+from dataclasses import dataclass
 
 from google.cloud import documentai_v1 as documentai
 
@@ -10,59 +17,65 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentAIService:
-    """A service for interacting with the Google Cloud Document AI API."""
+    """Google Cloud Document AI API と連携するサービス。"""
 
     def __init__(self, settings: Settings):
+        """型付きの実行時設定を使って API クライアントを初期化する。"""
         self.settings = settings
         self.client = documentai.DocumentProcessorServiceClient()
 
     def start_ocr_batch_job(self, input_bucket: str, file_name: str) -> str:
-        logger.info("Starting OCR job for gs://%s/%s", input_bucket, file_name)
+        """
+        Document AI のバッチ処理ジョブを開始する。
 
-        # ---- processor ----
-        processor_id = self.settings.processor_id_normalized()
-        name = self.client.processor_path(
+        入出力は gs:// URI のため、実GCSが必要。
+        返り値:
+          - operation name（監視・トラブルシュート用）
+        """
+        logger.info("OCRジョブを開始します: gs://%s/%s", input_bucket, file_name)
+
+        resource_name = self.client.processor_path(
             self.settings.gcp_project_id,
             self.settings.processor_location,
-            processor_id,
+            self.settings.processor_id,
         )
 
-        # ---- input (official field: input_documents) ----
         gcs_document = documentai.GcsDocument(
             gcs_uri=f"gs://{input_bucket}/{file_name}",
             mime_type="application/pdf",
         )
-        gcs_documents = documentai.GcsDocuments(documents=[gcs_document])
+
         input_config = documentai.BatchDocumentsInputConfig(
-            gcs_documents=gcs_documents)
+            gcs_documents=documentai.GcsDocuments(documents=[gcs_document])
+        )
 
-        # ---- output (official field: document_output_config) ----
-        # gcs_uri は「出力ディレクトリURI」なので末尾 / を付ける
         output_uri = f"{self.settings.temp_bucket_uri()}{file_name}_json/"
-
-        gcs_output_config = documentai.DocumentOutputConfig.GcsOutputConfig(
-            gcs_uri=output_uri
-        )
-        document_output_config = documentai.DocumentOutputConfig(
-            gcs_output_config=gcs_output_config
+        output_config = documentai.DocumentOutputConfig(
+            gcs_output_config=documentai.DocumentOutputConfig.GcsOutputConfig(
+                gcs_uri=output_uri)
         )
 
-        # input_documents / document_output_config を使う
         request = documentai.BatchProcessRequest(
-            name=name,
+            name=resource_name,
             input_documents=input_config,
-            document_output_config=document_output_config,
+            document_output_config=output_config,
         )
 
-        operation = self.client.batch_process_documents(request=request)
-        logger.info("OCR Job started. Operation: %s", operation.operation.name)
-        return operation.operation.name
+        try:
+            operation = self.client.batch_process_documents(request=request)
+            logger.info("OCRジョブを開始しました。Operation: %s",
+                        operation.operation.name)
+            return operation.operation.name
+        except Exception:
+            logger.exception("OCRジョブの開始に失敗しました")
+            raise
 
 
+@dataclass(frozen=True)
 class Services:
-    def __init__(self, settings: Settings):
-        self.docai_service = DocumentAIService(settings)
+    docai_service: DocumentAIService
 
 
 def build_services(settings: Settings) -> Services:
-    return Services(settings)
+    """entrypoint で使用するサービス群を構築して返す。"""
+    return Services(docai_service=DocumentAIService(settings))

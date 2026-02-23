@@ -1,4 +1,5 @@
-"""md_generator パッケージ。
+"""
+md_generator パッケージ。
 
 Document AI の OCR JSON を Markdown へ整形する関数群を提供する。
 """
