@@ -12,6 +12,7 @@ entrypoint から直接API詳細を分離し、責務を明確化する。
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 
 from google.cloud import documentai_v1 as documentai
@@ -94,11 +95,17 @@ class DocumentAIService:
             # 5) バッチ処理を投入する。
             #    呼び出し時間は「API受理まで」の時間であり、OCR完了時間ではない。
             started_at = time.perf_counter()
-            operation = self.client.batch_process_documents(
-                request=request,
-                retry=None,
-                timeout=self.settings.docai_submit_timeout_sec,
-            )
+            # SDK timeout だけでなく、呼び出し全体にもハードタイムアウトをかける。
+            # （認証/接続確立などで内部的に長引くケースを早期に打ち切るため）
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.client.batch_process_documents,
+                    request=request,
+                    retry=None,
+                    timeout=self.settings.docai_submit_timeout_sec,
+                )
+                operation = future.result(
+                    timeout=self.settings.docai_submit_timeout_sec)
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "Document AI batch accepted: operation=%s elapsed_ms=%d timeout_sec=%d output_uri=%s",
@@ -108,6 +115,17 @@ class DocumentAIService:
                 output_uri,
             )
             return operation.operation.name
+        except FuturesTimeoutError:
+            logger.error(
+                "Document AI batch submission hard-timeout: processor=%s location=%s timeout_sec=%d input_uri=gs://%s/%s output_uri=%s",
+                self.settings.processor_id,
+                self.settings.processor_location,
+                self.settings.docai_submit_timeout_sec,
+                input_bucket,
+                file_name,
+                output_uri,
+            )
+            raise TimeoutError("Document AI batch submission timed out")
         except Exception:
             # 失敗時は processor/input/output をまとめて記録し、上位へ再送出する。
             logger.exception(
