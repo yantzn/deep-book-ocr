@@ -8,6 +8,8 @@
 
 from cloudevents.http import CloudEvent
 
+from main import start_ocr
+
 
 def test_start_ocr_success(mock_docai_service):
     """正常系: PDFアップロードイベントで OCR バッチジョブが開始される。"""
@@ -21,8 +23,7 @@ def test_start_ocr_success(mock_docai_service):
         data={"bucket": "input-bucket", "name": "file.pdf"},
     )
 
-    msg, code = __import__("ocr_trigger.entrypoint", fromlist=[
-                           "start_ocr"]).start_ocr(event)
+    msg, code = start_ocr(event)
     assert code == 200
     mock_docai_service.start_ocr_batch_job.assert_called_once_with(
         "input-bucket", "file.pdf")
@@ -36,8 +37,7 @@ def test_start_ocr_skip_non_pdf(mock_docai_service):
         data={"bucket": "input-bucket", "name": "file.txt"},
     )
 
-    msg, code = __import__("ocr_trigger.entrypoint", fromlist=[
-                           "start_ocr"]).start_ocr(event)
+    msg, code = start_ocr(event)
     assert code == 200
     mock_docai_service.start_ocr_batch_job.assert_not_called()
 
@@ -50,6 +50,5 @@ def test_start_ocr_bad_event_data(mock_docai_service):
         data={"bucket": "input-bucket"},  # name が欠損
     )
 
-    msg, code = __import__("ocr_trigger.entrypoint", fromlist=[
-                           "start_ocr"]).start_ocr(event)
+    msg, code = start_ocr(event)
     assert code == 400

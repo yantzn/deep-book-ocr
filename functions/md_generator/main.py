@@ -1,30 +1,36 @@
 from __future__ import annotations
+from md_generator.markdown_logic import (
+    build_page_chunks,
+    derive_output_markdown_name,
+    extract_text_from_page_range,
+)
+from md_generator.gcp_services import build_services
+from md_generator.config import Settings, get_settings
+
+"""
+Cloud Functions (Gen2) / Functions Framework エントリポイント。
+
+このファイルを実処理本体として使用する。
+（python310 デプロイ要件: source 直下に main.py が必要）
+"""
 
 import json
 import logging
+import os
+import sys
 import time
 from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
 
-from .config import Settings, get_settings
-from .gcp_services import build_services
-from .markdown_logic import (
-    build_page_chunks,
-    derive_output_markdown_name,
-    extract_text_from_page_range,
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
 
 logger = logging.getLogger(__name__)
 
 
 def setup_logging(settings: Settings) -> None:
-    """
-    logging 初期化。
-    - ローカル: 標準logging
-    - GCP: Cloud Logging を有効化（遅延importでローカル破損を回避）
-    """
     level_name = settings.log_level.upper()
     level = getattr(logging, level_name, logging.INFO)
 
@@ -42,7 +48,7 @@ def setup_logging(settings: Settings) -> None:
 
     if settings.is_gcp:
         try:
-            import google.cloud.logging as cloud_logging  # ✅ 遅延import
+            import google.cloud.logging as cloud_logging
 
             cloud_logging.Client().setup_logging()
             logger.info("Cloud Logging を初期化しました")
@@ -51,17 +57,10 @@ def setup_logging(settings: Settings) -> None:
 
 
 def load_json_utf8(raw: bytes) -> dict[str, Any]:
-    """
-    GCSから取得したJSON(bytes)をUTF-8固定で読み込む。
-
-    - 文字化けの根を断つため、decodeを明示
-    - 失敗したら例外で落として原因を明確化
-    """
-    text = raw.decode("utf-8")  # ✅ 明示
+    text = raw.decode("utf-8")
     return json.loads(text)
 
 
-# グローバル初期化（呼び出し間で再利用）
 settings = get_settings()
 setup_logging(settings)
 services = build_services(settings)
@@ -69,12 +68,6 @@ services = build_services(settings)
 
 @functions_framework.cloud_event
 def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
-    """
-    トリガー: GCS finalize イベント（Document AI のJSON出力）
-    - JSON以外はスキップ
-    - OCR JSON を読み取り、ページチャンクでGemini整形
-    - OUTPUT_BUCKET に Markdown をUTF-8で保存（charset付き）
-    """
     try:
         started_at = time.perf_counter()
         event_id = cloud_event.get("id")
@@ -103,7 +96,6 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
         logger.info("Downloaded OCR JSON: bucket=%s name=%s bytes=%d",
                     bucket, name, len(raw))
 
-        # ✅ UTF-8固定でJSONロード（ここが重要）
         doc = load_json_utf8(raw)
 
         total_pages = len((doc.get("pages", []) or []))
@@ -156,8 +148,6 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
             return ("Markdownが空でした。", 200)
 
         out_name = derive_output_markdown_name(name)
-
-        # ✅ UTF-8 + charset でアップロード（gcp_services側でencodeしている）
         services.storage.upload_text(
             settings.output_bucket, out_name, final_md)
 
@@ -181,3 +171,6 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
     except Exception:
         logger.exception("Unexpected error while generating markdown")
         return ("サーバー内部エラー", 500)
+
+
+__all__ = ["generate_markdown"]

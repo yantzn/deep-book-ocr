@@ -47,7 +47,7 @@ def _bootstrap_env() -> None:
 _ensure_venv_python()
 _bootstrap_env()
 
-from md_generator.entrypoint import generate_markdown  # noqa: E402
+from main import generate_markdown  # noqa: E402
 
 
 def run_local():

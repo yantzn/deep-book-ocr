@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 @pytest.fixture
 def mock_docai_service() -> MagicMock:
     """
-    entrypoint.docai_service を差し替え、モックを返す。
+    main.docai_service を差し替え、モックを返す。
     """
-    with patch("ocr_trigger.entrypoint.docai_service") as mock_service:
+    with patch("main.docai_service") as mock_service:
         yield mock_service
