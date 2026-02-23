@@ -44,7 +44,7 @@ jobs:
             --timeout=120s \
             --min-instances=0 \
             --max-instances=30 \
-            --concurrency=10 \
+            --concurrency=1 \
             --source=functions/ocr_trigger \
             --entry-point=start_ocr \
             --quiet
