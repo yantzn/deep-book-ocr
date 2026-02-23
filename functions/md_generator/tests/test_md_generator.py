@@ -9,8 +9,8 @@
 import json
 from cloudevents.http import CloudEvent
 
-import md_generator.entrypoint as entrypoint
-from md_generator.entrypoint import generate_markdown
+import main as entrypoint
+from main import generate_markdown
 
 
 def _sample_docai_json() -> dict:

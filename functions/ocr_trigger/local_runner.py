@@ -57,7 +57,7 @@ def _bootstrap_env() -> None:
 _ensure_venv_python()
 _bootstrap_env()
 
-from ocr_trigger.entrypoint import start_ocr  # noqa: E402
+from main import start_ocr  # noqa: E402
 
 
 def run_local():

@@ -4,17 +4,31 @@ entrypoint が参照する services を monkeypatch し、
 外部依存（GCS/Gemini）を持たない単体テストを実現する。
 """
 
+import main as entrypoint
 import pytest
+import sys
+from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import MagicMock
 
-import md_generator.entrypoint as entrypoint
+# tests/ 直下実行でも main.py を import できるように関数ルートを追加
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def _rebind_services(*, storage=None, gemini=None):
+    current = entrypoint.services
+    rebound = SimpleNamespace(
+        storage=storage if storage is not None else current.storage,
+        gemini=gemini if gemini is not None else current.gemini,
+    )
+    entrypoint.services = rebound
 
 
 @pytest.fixture
 def mock_storage(monkeypatch):
     """entrypoint が使う storage クライアントを差し替えてモックを返す。"""
     mock = MagicMock()
-    monkeypatch.setattr(entrypoint.services, "storage", mock)
+    _rebind_services(storage=mock)
     return mock
 
 
@@ -22,5 +36,5 @@ def mock_storage(monkeypatch):
 def mock_gemini(monkeypatch):
     """entrypoint が使う gemini クライアントを差し替えてモックを返す。"""
     mock = MagicMock()
-    monkeypatch.setattr(entrypoint.services, "gemini", mock)
+    _rebind_services(gemini=mock)
     return mock
