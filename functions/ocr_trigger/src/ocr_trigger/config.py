@@ -30,19 +30,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # 実行環境: local | gcp
+    # 実行環境の種別。Cloud Logging 初期化の分岐などで利用する（local | gcp）。
     app_env: str = Field(default="local", alias="APP_ENV")
-    # DEBUG/INFO/WARNING/ERROR を想定
+    # アプリ全体のログ出力レベル（DEBUG/INFO/WARNING/ERROR を想定）。
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Document AI / GCP API を呼び出す対象プロジェクトID。
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
     # Document AI Processor のリージョン（例: us / eu）
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
-    # Processor の短縮IDを想定（Terraform 出力値）
+    # Processor の短縮ID（Terraform 出力値を想定）。
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 
-    # 例: "gs://deep-book-ocr-temp" と "deep-book-ocr-temp" の両方を許容
+    # OCR JSON を出力する一時バケット（gs:// 付き/なしの両方を許容）。
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
 
     @property
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
 
     def temp_bucket_uri(self) -> str:
         """TEMP_BUCKET を 'gs://.../' 形式へ正規化する。"""
+        # 入力揺れ（gs:// 有無、末尾スラッシュ有無）を吸収する。
         t = self.temp_bucket.strip()
         if t.startswith("gs://"):
             return t.rstrip("/") + "/"

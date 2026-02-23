@@ -80,6 +80,7 @@ class StorageClient:
 
     def download_bytes(self, bucket: str, name: str) -> bytes:
         """GCSオブジェクトを bytes として取得する。"""
+        # 1) 対象オブジェクトを特定してダウンロードする。
         logger.debug("Downloading object: gs://%s/%s", bucket, name)
         blob = self.client.bucket(bucket).blob(name)
         data = blob.download_as_bytes()
@@ -95,11 +96,12 @@ class StorageClient:
         content_type: str = MD_CONTENT_TYPE,
     ) -> None:
         """Markdown文字列を UTF-8 で GCS へ保存する。"""
+        # 1) 出力先オブジェクトを特定する。
         logger.debug("Uploading markdown: gs://%s/%s content_type=%s chars=%d",
                      bucket, name, content_type, len(text))
         blob = self.client.bucket(bucket).blob(name)
 
-        # 明示的にUTF-8でアップロード（content-typeと合わせて事故を防ぐ）
+        # 2) content_type を付与して UTF-8 バイト列として保存する。
         blob.upload_from_string(text.encode(
             "utf-8"), content_type=content_type)
         logger.debug("Upload completed: gs://%s/%s", bucket, name)
@@ -109,9 +111,10 @@ class GeminiClient:
     """Vertex AI Gemini クライアント（ローカルでもADCで実GCPへ）。"""
 
     def __init__(self, settings: Settings):
-        # 以降の generate_content はこの project/location に対して実行される
+        # 1) 実行先の project/location を初期化する。
         vertexai.init(project=settings.gcp_project_id,
                       location=settings.gcp_location)
+        # 2) モデル名から Gemini クライアントを生成する。
         self.model = GenerativeModel(settings.model_name)
         logger.info("Gemini initialized: project=%s location=%s model=%s",
                     settings.gcp_project_id, settings.gcp_location, settings.model_name)
@@ -126,15 +129,17 @@ class GeminiClient:
         出力:
         - 生成された Markdown 文字列（空の場合は ""）
         """
+        # 1) 指示文 + OCR本文でプロンプトを構成する。
         logger.debug("Gemini request start: input_chars=%d", len(ocr_text))
-        # システム指示 + 区切り + OCR本文 の順でモデルに渡す
         prompt = [
             Part.from_text(SYS_INSTRUCTION),
             Part.from_text("\n\n--- OCR TEXT ---\n"),
             Part.from_text(ocr_text),
         ]
+        # 2) 同期呼び出しで Markdown を取得する。
         started_at = time.perf_counter()
         resp = self.model.generate_content(prompt, stream=False)
+        # 3) 取得した本文を返す（空は空文字へ正規化）。
         output = resp.text or ""
         logger.debug("Gemini request done: output_chars=%d elapsed_ms=%d",
                      len(output), int((time.perf_counter() - started_at) * 1000))
@@ -151,6 +156,7 @@ class Services:
 
 def build_services(settings: Settings) -> Services:
     """設定をもとにサービス群を組み立てるファクトリ。"""
+    # entrypoint から外部サービスを一括参照できるように束ねて返す。
     return Services(
         storage=StorageClient(settings),
         gemini=GeminiClient(settings),
