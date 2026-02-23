@@ -27,26 +27,31 @@ class Settings(BaseSettings):
         protected_namespaces=("settings_",),
     )
 
-    # local | gcp
+    # 実行環境の種別。Cloud Logging 初期化の分岐などで利用する（local | gcp）。
     app_env: str = Field(default="local", alias="APP_ENV")
+    # アプリ全体のログ出力レベル。
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Vertex AI
+    # Vertex AI を呼び出す対象プロジェクトID。
     gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
+    # Vertex AI のリージョン（例: us-central1）。
     gcp_location: str = Field(default="us-central1", alias="GCP_LOCATION")
 
-    # Output
+    # 生成した Markdown を保存する出力バケット名。
     output_bucket: str = Field(..., alias="OUTPUT_BUCKET")
 
-    # Gemini
+    # 変換に使用する Gemini モデル名。
     model_name: str = Field(default="gemini-1.5-pro", alias="MODEL_NAME")
+    # 1回の推論に渡すページ数（大きすぎると遅延/失敗率が上がる）。
     chunk_size: int = Field(default=10, alias="CHUNK_SIZE")
 
     @property
     def is_gcp(self) -> bool:
+        # デプロイ先の GCP 環境で実行中なら True。
         return self.app_env.lower() == "gcp"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    # 設定読み込みをプロセス内で1回に抑え、毎回の環境変数パースを避ける。
     return Settings()

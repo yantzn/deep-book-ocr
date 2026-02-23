@@ -19,6 +19,7 @@ from cloudevents.http import CloudEvent
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
+# ローカルパッケージを動的ロードし、import順序変更の影響を受けにくくする。
 config = importlib.import_module("ocr_trigger.config")
 gcp_services = importlib.import_module("ocr_trigger.gcp_services")
 
@@ -27,9 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(settings: config.Settings) -> None:
+    # 設定値に応じてログレベルを決定する。
     level_name = settings.log_level.upper()
     level = getattr(logging, level_name, logging.INFO)
 
+    # ローカル実行/Cloud Functions の両方で重複初期化を避けつつ logger を設定する。
     root = logging.getLogger()
     if not root.handlers:
         logging.basicConfig(
@@ -42,6 +45,7 @@ def setup_logging(settings: config.Settings) -> None:
     logger.info("Logging configured: level=%s app_env=%s",
                 level_name, settings.app_env)
 
+    # GCP 実行時のみ Cloud Logging 連携を有効化する。
     if settings.is_gcp:
         try:
             import google.cloud.logging as cloud_logging
@@ -52,6 +56,7 @@ def setup_logging(settings: config.Settings) -> None:
             logger.exception("Failed to initialize Cloud Logging")
 
 
+# アプリ起動時に設定・ログ・外部サービスクライアントを初期化する。
 settings = config.get_settings()
 setup_logging(settings)
 services = gcp_services.build_services(settings)
@@ -61,8 +66,10 @@ docai_service = services.docai_service
 @functions_framework.cloud_event
 def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
     try:
+        # 1) イベント基本情報を取得する（ログ/トレース用）。
         event_id = cloud_event.get("id")
         event_type = cloud_event.get("type")
+        # 2) Cloud Storage イベントペイロードから対象オブジェクトを取り出す。
         data: dict[str, Any] = cloud_event.data or {}
         bucket = data["bucket"]
         name = data["name"]
@@ -77,6 +84,7 @@ def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
             generation,
         )
 
+        # 3) PDF 以外は処理対象外としてスキップする。
         if not name.lower().endswith(".pdf"):
             logger.info(
                 "Skipped non-PDF object: event_id=%s bucket=%s name=%s",
@@ -86,6 +94,7 @@ def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
             )
             return ("PDF以外のためスキップしました。", 200)
 
+        # 4) Document AI の非同期バッチ処理を起動する。
         started_at = time.perf_counter()
         op_name = docai_service.start_ocr_batch_job(bucket, name)
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -101,6 +110,7 @@ def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
         return ("OCR処理を開始しました。", 200)
 
     except KeyError as e:
+        # 必須キー不足は 400 として呼び出し元へ返す。
         logger.error(
             "Invalid CloudEvent payload: missing_key=%s payload_keys=%s",
             e,
@@ -109,6 +119,7 @@ def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
         return (f"不正なリクエスト: CloudEventのデータが不足しています: {e}", 400)
 
     except Exception:
+        # 想定外の失敗は 500 として扱う。
         logger.exception("Unexpected error while submitting OCR batch")
         return ("サーバー内部エラー", 500)
 
