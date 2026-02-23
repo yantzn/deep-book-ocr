@@ -96,6 +96,7 @@ class DocumentAIService:
             started_at = time.perf_counter()
             operation = self.client.batch_process_documents(
                 request=request,
+                retry=None,
                 timeout=self.settings.docai_submit_timeout_sec,
             )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
