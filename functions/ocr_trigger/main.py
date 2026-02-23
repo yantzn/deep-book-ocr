@@ -1,5 +1,4 @@
 from __future__ import annotations
-from ocr_trigger import config, gcp_services
 
 """
 Cloud Functions (Gen2) / Functions Framework エントリポイント。
@@ -9,6 +8,7 @@ Cloud Functions (Gen2) / Functions Framework エントリポイント。
 """
 
 import logging
+import importlib
 import os
 import sys
 import time
@@ -18,6 +18,9 @@ import functions_framework
 from cloudevents.http import CloudEvent
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+config = importlib.import_module("ocr_trigger.config")
+gcp_services = importlib.import_module("ocr_trigger.gcp_services")
 
 
 logger = logging.getLogger(__name__)

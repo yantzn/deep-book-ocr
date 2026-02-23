@@ -4,15 +4,17 @@ entrypoint が参照する services を monkeypatch し、
 外部依存（GCS/Gemini）を持たない単体テストを実現する。
 """
 
-import main as entrypoint
 import pytest
 import sys
+import importlib
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock
 
 # tests/ 直下実行でも main.py を import できるように関数ルートを追加
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+entrypoint = importlib.import_module("main")
 
 
 def _rebind_services(*, storage=None, gemini=None):

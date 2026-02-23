@@ -1,11 +1,4 @@
 from __future__ import annotations
-from md_generator.markdown_logic import (
-    build_page_chunks,
-    derive_output_markdown_name,
-    extract_text_from_page_range,
-)
-from md_generator.gcp_services import build_services
-from md_generator.config import Settings, get_settings
 
 """
 Cloud Functions (Gen2) / Functions Framework エントリポイント。
@@ -15,6 +8,7 @@ Cloud Functions (Gen2) / Functions Framework エントリポイント。
 """
 
 import json
+import importlib
 import logging
 import os
 import sys
@@ -25,6 +19,17 @@ import functions_framework
 from cloudevents.http import CloudEvent
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+config_module = importlib.import_module("md_generator.config")
+gcp_services_module = importlib.import_module("md_generator.gcp_services")
+markdown_logic_module = importlib.import_module("md_generator.markdown_logic")
+
+Settings = config_module.Settings
+get_settings = config_module.get_settings
+build_services = gcp_services_module.build_services
+build_page_chunks = markdown_logic_module.build_page_chunks
+derive_output_markdown_name = markdown_logic_module.derive_output_markdown_name
+extract_text_from_page_range = markdown_logic_module.extract_text_from_page_range
 
 
 logger = logging.getLogger(__name__)
