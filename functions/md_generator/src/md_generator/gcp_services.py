@@ -1,11 +1,5 @@
 from __future__ import annotations
 
-"""md_generator の外部サービスアダプタ。
-
-- StorageClient: OCR JSON と Markdown の入出力
-- GeminiClient: OCRテキストを Markdown へ整形
-"""
-
 import logging
 from dataclasses import dataclass
 
@@ -16,7 +10,6 @@ from vertexai.generative_models import GenerativeModel, Part
 from .config import Settings
 
 logger = logging.getLogger(__name__)
-
 
 SYS_INSTRUCTION = (
     "You are an expert technical editor.\n"
@@ -31,34 +24,22 @@ MD_CONTENT_TYPE = "text/markdown"
 
 
 class StorageClient:
-    """
-    実GCS用の Storage アダプタ。
-    """
+    """実GCS用の Storage アダプタ。"""
 
     def __init__(self, settings: Settings):
         self.client = storage.Client(project=settings.gcp_project_id)
 
     def download_bytes(self, bucket: str, name: str) -> bytes:
-        """実GCSからオブジェクトを bytes で取得する。"""
         blob = self.client.bucket(bucket).blob(name)
         return blob.download_as_bytes()
 
-    def upload_text(
-        self,
-        bucket: str,
-        name: str,
-        text: str,
-        content_type: str = MD_CONTENT_TYPE,
-    ) -> None:
+    def upload_text(self, bucket: str, name: str, text: str, content_type: str = MD_CONTENT_TYPE) -> None:
         blob = self.client.bucket(bucket).blob(name)
         blob.upload_from_string(text, content_type=content_type)
 
 
 class GeminiClient:
-    """
-    Vertex AI Gemini クライアント。
-    ローカル実行時でも常に実GCP（ADC）を利用する。
-    """
+    """Vertex AI Gemini クライアント（ローカルでもADCで実GCPへ）。"""
 
     def __init__(self, settings: Settings):
         vertexai.init(project=settings.gcp_project_id,
@@ -66,7 +47,6 @@ class GeminiClient:
         self.model = GenerativeModel(settings.model_name)
 
     def to_markdown(self, ocr_text: str, sys_instruction: str = SYS_INSTRUCTION) -> str:
-        """OCRテキストを設定済みGeminiモデルで markdown に変換する。"""
         prompt = [
             Part.from_text(sys_instruction),
             Part.from_text("\n\n--- OCR TEXT ---\n"),
@@ -83,7 +63,6 @@ class Services:
 
 
 def build_services(settings: Settings) -> Services:
-    """エントリポイントで使用する外部クライアント群を構築して返す。"""
     return Services(
         storage=StorageClient(settings),
         gemini=GeminiClient(settings),

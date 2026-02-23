@@ -1,22 +1,29 @@
-# Thin wrapper Makefile for md_generator (path-robust)
-ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+SHELL := /bin/bash
+.ONESHELL:
 
-.PHONY: install install-dev compile compile-dev test run
+VENV := .venv
+PY := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
 
-install:
-	$(MAKE) -f $(ROOT)/Makefile install FUNCTION=md_generator
+.PHONY: venv
+venv:
+	@test -d $(VENV) || python -m venv $(VENV)
+	@$(PIP) install -U pip
 
-install-dev:
-	$(MAKE) -f $(ROOT)/Makefile install-dev FUNCTION=md_generator
+.PHONY: install
+install: venv
+	@$(PIP) install -r requirements.txt
+	@$(PIP) install -r requirements-dev.txt
 
-compile:
-	$(MAKE) -f $(ROOT)/Makefile compile FUNCTION=md_generator
+.PHONY: run
+run: venv
+	@echo "Running local_runner for md_generator..."
+	@$(PY) local_runner.py
 
-compile-dev:
-	$(MAKE) -f $(ROOT)/Makefile compile-dev FUNCTION=md_generator
+.PHONY: test
+test: venv
+	@$(PY) -m pytest -q
 
-test:
-	$(MAKE) -f $(ROOT)/Makefile test FUNCTION=md_generator
-
-run:
-	$(MAKE) -f $(ROOT)/Makefile run FUNCTION=md_generator
+.PHONY: lint
+lint: venv
+	@$(VENV)/bin/ruff check .

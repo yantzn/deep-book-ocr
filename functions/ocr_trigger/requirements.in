@@ -1,5 +1,8 @@
-functions-framework
-cloudevents
-pydantic-settings
-google-cloud-documentai
-google-cloud-logging
+functions-framework>=3.5.0
+cloudevents>=1.11.0
+
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+google-cloud-documentai>=2.34.0
+google-cloud-logging>=3.11.0
