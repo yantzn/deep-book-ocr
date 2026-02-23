@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Vertex AI
     gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")

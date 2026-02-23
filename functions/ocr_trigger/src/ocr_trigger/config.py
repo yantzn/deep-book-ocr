@@ -32,10 +32,14 @@ class Settings(BaseSettings):
 
     # 実行環境: local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
+    # DEBUG/INFO/WARNING/ERROR を想定
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
+    # Document AI Processor のリージョン（例: us / eu）
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
+    # Processor の短縮IDを想定（Terraform 出力値）
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 
     # 例: "gs://deep-book-ocr-temp" と "deep-book-ocr-temp" の両方を許容
