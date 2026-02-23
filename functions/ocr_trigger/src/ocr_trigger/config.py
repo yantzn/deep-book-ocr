@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-"""ocr_trigger の設定モジュール。
+"""
+ocr_trigger の設定モジュール。
 
-環境変数を型付きで受け取り、URI整形ルールを統一する。
+方針:
+- 環境変数を型付きで受け取り、URI整形ルールを統一する
+- .env はカレントディレクトリに依存させず、関数ルートの .env を参照する
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# src/ocr_trigger/config.py -> functions/ocr_trigger/.env
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
@@ -18,17 +25,21 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # 実行環境: local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
+    # DEBUG/INFO/WARNING/ERROR を想定
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
+    # Document AI Processor のリージョン（例: us / eu）
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
+    # Processor の短縮IDを想定（Terraform 出力値）
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 
     # 例: "gs://deep-book-ocr-temp" と "deep-book-ocr-temp" の両方を許容
@@ -36,11 +47,11 @@ class Settings(BaseSettings):
 
     @property
     def is_gcp(self) -> bool:
-        """デプロイ先のGCP環境で実行中なら True を返す。"""
+        """デプロイ先のGCP環境で実行中なら True。"""
         return self.app_env.lower() == "gcp"
 
     def temp_bucket_uri(self) -> str:
-        """TEMP_BUCKET を 'gs://<bucket>/' 形式へ正規化する。"""
+        """TEMP_BUCKET を 'gs://.../' 形式へ正規化する。"""
         t = self.temp_bucket.strip()
         if t.startswith("gs://"):
             return t.rstrip("/") + "/"
@@ -49,7 +60,5 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    パフォーマンスのため設定インスタンスをキャッシュして返す。
-    """
+    """設定インスタンスをキャッシュして返す。"""
     return Settings()

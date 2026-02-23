@@ -1,4 +1,2 @@
--r requirements.in
-pytest
-ruff
-pip-tools
+pytest>=8.0.0
+ruff>=0.6.0

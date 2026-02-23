@@ -1,52 +1,52 @@
 from __future__ import annotations
 
-"""md_generator の設定モジュール。
-
-環境変数を一元管理し、関数実行中はキャッシュ済み Settings を使い回す。
-"""
-
 from functools import lru_cache
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# src/md_generator/config.py -> functions/md_generator/.env を参照
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """
-    md_generator 用の設定。
-    env / .env から設定値を読み込む。
+    md_generator 用設定。
 
-    主な方針:
-    - APP_ENV でログ出力モード（local / gcp）を切り替える
-    - Vertex AI（Gemini）はローカルでも常に実GCP（ADC）を利用する
+    重要:
+    - 文字化け対策として、JSON読み込みは UTF-8 固定で行う（entrypoint側で実施）
+    - ローカル/GCPでログ初期化を分岐（entrypoint側で実施）
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
+        # pydantic warning回避（任意だが推奨）
+        protected_namespaces=("settings_",),
     )
 
-    # 実行環境: local | gcp
+    # local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Vertex AI 用のGCP設定
+    # Vertex AI
     gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
     gcp_location: str = Field(default="us-central1", alias="GCP_LOCATION")
 
-    # 実GCSモードでの出力バケット
+    # Output
     output_bucket: str = Field(..., alias="OUTPUT_BUCKET")
 
-    # Gemini設定
+    # Gemini
     model_name: str = Field(default="gemini-1.5-pro", alias="MODEL_NAME")
     chunk_size: int = Field(default=10, alias="CHUNK_SIZE")
 
     @property
     def is_gcp(self) -> bool:
-        """デプロイ先のGCP環境で実行中なら True を返す。"""
         return self.app_env.lower() == "gcp"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """設定インスタンスをキャッシュして返す。"""
     return Settings()

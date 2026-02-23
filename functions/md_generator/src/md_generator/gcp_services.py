@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-"""md_generator の外部サービスアダプタ。
+"""
+md_generator の GCP 連携層。
 
-- StorageClient: OCR JSON と Markdown の入出力
-- GeminiClient: OCRテキストを Markdown へ整形
+このモジュールの責務:
+- GCS から OCR JSON を読み込む（StorageClient）
+- Gemini へテキストを渡して Markdown 化する（GeminiClient）
+- entrypoint へ両者をまとめて提供する（Services / build_services）
+
+ビジネスロジック（ページ分割やJSON解析）は entrypoint / markdown_logic 側で扱い、
+ここでは外部サービス呼び出しに集中する。
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 import vertexai
@@ -17,31 +24,68 @@ from .config import Settings
 
 logger = logging.getLogger(__name__)
 
+# md_generator の整形方針はこの命令文を単一ソースとして固定する。
+# 運用上の再現性確保のため、実行時に外部入力で差し替えない。
+SYS_INSTRUCTION = """
+You are an expert editor converting OCR text from books into clean, faithful Markdown.
 
-SYS_INSTRUCTION = (
-    "You are an expert technical editor.\n"
-    "Format the OCR text into clean, well-structured Markdown.\n"
-    "- Detect source code and wrap in language-specific fenced code blocks.\n"
-    "- Add headings and captions when context suggests.\n"
-    "- Remove noise such as page numbers/headers/footers.\n"
-    "- Correct common OCR errors based on technical terminology.\n"
-)
+GOAL
+- Reconstruct the original content as accurately as possible.
+- Improve readability with Markdown structure without changing meaning.
 
-MD_CONTENT_TYPE = "text/markdown"
+STRICT RULES
+- Do NOT summarize.
+- Do NOT invent missing content.
+- Preserve the original language of the source text.
+- If the source text is Japanese, output must be Japanese.
+- Fix OCR errors only when the correction is obvious and certain.
+- If uncertain, keep the original text as-is.
+
+CLEANUP
+- Remove repeated noise such as page numbers, running headers, footers, and watermarks.
+- If the same line repeats across pages, keep it only once.
+
+STRUCTURE
+- Use headings (#, ##, ###) only when the section structure is clear from the text.
+- Preserve paragraph breaks; do not merge unrelated paragraphs.
+- Preserve lists (bullets/numbering) and indentation.
+
+TECHNICAL BOOK HANDLING
+- Detect code, CLI commands, config files, and logs; wrap them in fenced code blocks.
+- Infer the most likely language for the fence (e.g., python, bash, json, yaml, sql, text).
+- Preserve code and symbols exactly when possible (punctuation, brackets, quotes, backticks).
+- For tables, use Markdown tables if clearly tabular; otherwise keep as preformatted text.
+
+SELF-DEVELOPMENT / NONFICTION HANDLING
+- Preserve quotes and emphasized sentences.
+- If the author clearly highlights a “key takeaway”, keep it prominent using bold or blockquotes.
+- Do not add interpretations or commentary.
+
+OUTPUT
+- Output valid Markdown only.
+- No additional explanations outside the Markdown.
+- Do not translate unless the source text itself is translated.
+"""
+
+# charset を明示（ビューア/環境依存での文字化けを防ぐ）
+MD_CONTENT_TYPE = "text/markdown; charset=utf-8"
 
 
 class StorageClient:
-    """
-    実GCS用の Storage アダプタ。
-    """
+    """実GCS用の Storage アダプタ。"""
 
     def __init__(self, settings: Settings):
+        # project を明示しておくと、ADC複数設定時の誤接続を防ぎやすい
         self.client = storage.Client(project=settings.gcp_project_id)
 
     def download_bytes(self, bucket: str, name: str) -> bytes:
-        """実GCSからオブジェクトを bytes で取得する。"""
+        """GCSオブジェクトを bytes として取得する。"""
+        logger.debug("Downloading object: gs://%s/%s", bucket, name)
         blob = self.client.bucket(bucket).blob(name)
-        return blob.download_as_bytes()
+        data = blob.download_as_bytes()
+        logger.debug("Downloaded bytes: gs://%s/%s size=%d",
+                     bucket, name, len(data))
+        return data
 
     def upload_text(
         self,
@@ -50,40 +94,63 @@ class StorageClient:
         text: str,
         content_type: str = MD_CONTENT_TYPE,
     ) -> None:
+        """Markdown文字列を UTF-8 で GCS へ保存する。"""
+        logger.debug("Uploading markdown: gs://%s/%s content_type=%s chars=%d",
+                     bucket, name, content_type, len(text))
         blob = self.client.bucket(bucket).blob(name)
-        blob.upload_from_string(text, content_type=content_type)
+
+        # 明示的にUTF-8でアップロード（content-typeと合わせて事故を防ぐ）
+        blob.upload_from_string(text.encode(
+            "utf-8"), content_type=content_type)
+        logger.debug("Upload completed: gs://%s/%s", bucket, name)
 
 
 class GeminiClient:
-    """
-    Vertex AI Gemini クライアント。
-    ローカル実行時でも常に実GCP（ADC）を利用する。
-    """
+    """Vertex AI Gemini クライアント（ローカルでもADCで実GCPへ）。"""
 
     def __init__(self, settings: Settings):
+        # 以降の generate_content はこの project/location に対して実行される
         vertexai.init(project=settings.gcp_project_id,
                       location=settings.gcp_location)
         self.model = GenerativeModel(settings.model_name)
+        logger.info("Gemini initialized: project=%s location=%s model=%s",
+                    settings.gcp_project_id, settings.gcp_location, settings.model_name)
 
-    def to_markdown(self, ocr_text: str, sys_instruction: str = SYS_INSTRUCTION) -> str:
-        """OCRテキストを設定済みGeminiモデルで markdown に変換する。"""
+    def to_markdown(self, ocr_text: str) -> str:
+        """
+        OCRテキストを Gemini に渡して Markdown を生成する。
+
+        入力:
+        - ocr_text: Document AI から抽出した生テキスト
+
+        出力:
+        - 生成された Markdown 文字列（空の場合は ""）
+        """
+        logger.debug("Gemini request start: input_chars=%d", len(ocr_text))
+        # システム指示 + 区切り + OCR本文 の順でモデルに渡す
         prompt = [
-            Part.from_text(sys_instruction),
+            Part.from_text(SYS_INSTRUCTION),
             Part.from_text("\n\n--- OCR TEXT ---\n"),
             Part.from_text(ocr_text),
         ]
+        started_at = time.perf_counter()
         resp = self.model.generate_content(prompt, stream=False)
-        return resp.text or ""
+        output = resp.text or ""
+        logger.debug("Gemini request done: output_chars=%d elapsed_ms=%d",
+                     len(output), int((time.perf_counter() - started_at) * 1000))
+        return output
 
 
 @dataclass(frozen=True)
 class Services:
+    """entrypoint が利用する外部サービスの束。"""
+
     storage: StorageClient
     gemini: GeminiClient
 
 
 def build_services(settings: Settings) -> Services:
-    """エントリポイントで使用する外部クライアント群を構築して返す。"""
+    """設定をもとにサービス群を組み立てるファクトリ。"""
     return Services(
         storage=StorageClient(settings),
         gemini=GeminiClient(settings),

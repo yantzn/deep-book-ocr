@@ -8,6 +8,9 @@
 crash.log
 *.tfplan
 
+# provider lock ファイルは再現性のため追跡する
+!.terraform.lock.hcl
+
 # tfvars は通常除外だが、このプロジェクトでは terraform.tfvars は含める
 *.tfvars.json
 .override.tf

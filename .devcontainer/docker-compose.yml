@@ -11,7 +11,8 @@ services:
       - gcloud-config:/home/vscode/.config/gcloud
     environment:
       - GCP_PROJECT_ID=deep-book-ocr
-    command: /bin/sh -c "while sleep 1000; do :; done"
+    # ★ volume所有権問題（ADC保存Permission denied）を起動時に潰す
+    command: /bin/sh -c "sudo chown -R vscode:vscode /home/vscode/.config/gcloud || true; while sleep 1000; do :; done"
 
 volumes:
   gcloud-config:

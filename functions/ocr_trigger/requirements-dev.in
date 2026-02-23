@@ -1,5 +1,2 @@
-# Development dependencies
-pip-tools
-pytest
-pytest-mock
-ruff
+pytest>=8.0.0
+ruff>=0.6.0
