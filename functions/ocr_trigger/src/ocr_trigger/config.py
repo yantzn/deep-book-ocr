@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     # OCR JSON を出力する一時バケット（gs:// 付き/なしの両方を許容）。
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
+    # Document AI のジョブ投入APIに対する待機秒数（504回避のため短め推奨）。
+    docai_submit_timeout_sec: int = Field(
+        default=20, alias="DOCAI_SUBMIT_TIMEOUT_SEC")
 
     @property
     def is_gcp(self) -> bool:

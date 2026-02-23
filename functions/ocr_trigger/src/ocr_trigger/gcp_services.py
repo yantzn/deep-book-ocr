@@ -94,21 +94,26 @@ class DocumentAIService:
             # 5) バッチ処理を投入する。
             #    呼び出し時間は「API受理まで」の時間であり、OCR完了時間ではない。
             started_at = time.perf_counter()
-            operation = self.client.batch_process_documents(request=request)
+            operation = self.client.batch_process_documents(
+                request=request,
+                timeout=self.settings.docai_submit_timeout_sec,
+            )
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
-                "Document AI batch accepted: operation=%s elapsed_ms=%d output_uri=%s",
+                "Document AI batch accepted: operation=%s elapsed_ms=%d timeout_sec=%d output_uri=%s",
                 operation.operation.name,
                 elapsed_ms,
+                self.settings.docai_submit_timeout_sec,
                 output_uri,
             )
             return operation.operation.name
         except Exception:
             # 失敗時は processor/input/output をまとめて記録し、上位へ再送出する。
             logger.exception(
-                "Failed to submit Document AI batch: processor=%s location=%s input_uri=gs://%s/%s output_uri=%s",
+                "Failed to submit Document AI batch: processor=%s location=%s timeout_sec=%d input_uri=gs://%s/%s output_uri=%s",
                 self.settings.processor_id,
                 self.settings.processor_location,
+                self.settings.docai_submit_timeout_sec,
                 input_bucket,
                 file_name,
                 output_uri,
