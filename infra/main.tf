@@ -44,11 +44,9 @@ locals {
   # Document AI service agent (default)
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
 
-  documentai_service_agent_emails_effective = var.documentai_service_agent_email_override != "" ?
-  [
+  documentai_service_agent_emails_effective = var.documentai_service_agent_email_override != "" ? [
     var.documentai_service_agent_email_override,
-  ] :
-  distinct(
+    ] : distinct(
     concat(
       [local.documentai_service_agent_email],
       var.documentai_service_agent_emails_additional
