@@ -97,15 +97,15 @@ class DocumentAIService:
             started_at = time.perf_counter()
             # SDK timeout だけでなく、呼び出し全体にもハードタイムアウトをかける。
             # （認証/接続確立などで内部的に長引くケースを早期に打ち切るため）
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self.client.batch_process_documents,
-                    request=request,
-                    retry=None,
-                    timeout=self.settings.docai_submit_timeout_sec,
-                )
-                operation = future.result(
-                    timeout=self.settings.docai_submit_timeout_sec)
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(
+                self.client.batch_process_documents,
+                request=request,
+                retry=None,
+                timeout=self.settings.docai_submit_timeout_sec,
+            )
+            operation = future.result(timeout=self.settings.docai_submit_timeout_sec)
+            executor.shutdown(wait=False, cancel_futures=True)
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "Document AI batch accepted: operation=%s elapsed_ms=%d timeout_sec=%d output_uri=%s",
@@ -116,6 +116,8 @@ class DocumentAIService:
             )
             return operation.operation.name
         except FuturesTimeoutError:
+            future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
             logger.error(
                 "Document AI batch submission hard-timeout: processor=%s location=%s timeout_sec=%d input_uri=gs://%s/%s output_uri=%s",
                 self.settings.processor_id,
