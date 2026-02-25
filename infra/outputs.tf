@@ -3,7 +3,7 @@ output "bucket_names" {
 }
 
 output "ocr_processor_id" {
-  value = google_document_ai_processor.ocr_processor.id
+  value = element(reverse(split("/", google_document_ai_processor.ocr_processor.id)), 0)
 }
 
 output "input_bucket" {
