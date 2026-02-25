@@ -1,127 +1,106 @@
+"""
+責務:
+- GCS finalize イベントから入力PDFを特定
+- PDF以外を除外
+- Document AI バッチOCRを起動（submit だけ行い、完了待ちはしない）
+- Cloud Logging（GCP時）を初期化
+"""
+
 from __future__ import annotations
 
-"""
-Cloud Functions (Gen2) / Functions Framework エントリポイント。
-
-このファイルを実処理本体として使用する。
-（python310 デプロイ要件: source 直下に main.py が必要）
-"""
-
 import logging
-import importlib
 import os
-import sys
-import time
 from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
-# ローカルパッケージを動的ロードし、import順序変更の影響を受けにくくする。
-config = importlib.import_module("ocr_trigger.config")
-gcp_services = importlib.import_module("ocr_trigger.gcp_services")
-
+from ocr_trigger.config import get_settings
+from ocr_trigger.gcp_services import build_services
 
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(settings: config.Settings) -> None:
-    # 設定値に応じてログレベルを決定する。
-    level_name = settings.log_level.upper()
-    level = getattr(logging, level_name, logging.INFO)
+def _setup_logging() -> None:
+    """
+    ローカル:
+      - 標準loggingのみ
+    GCP:
+      - google-cloud-logging が入っていれば Cloud Logging に統合
+    """
+    settings = get_settings()
 
-    # ローカル実行/Cloud Functions の両方で重複初期化を避けつつ logger を設定する。
-    root = logging.getLogger()
-    if not root.handlers:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-    else:
-        root.setLevel(level)
+    # まず標準logging
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(level=level)
 
-    logger.info("Logging configured: level=%s app_env=%s",
-                level_name, settings.app_env)
+    if not settings.is_gcp:
+        logger.info("Logging: local mode (standard logging)")
+        return
 
-    # GCP 実行時のみ Cloud Logging 連携を有効化する。
-    if settings.is_gcp:
-        try:
-            import google.cloud.logging as cloud_logging
+    # GCP のときだけ Cloud Logging
+    try:
+        from google.cloud import logging as cloud_logging  # type: ignore
 
-            cloud_logging.Client().setup_logging()
-            logger.info("Cloud Logging initialized")
-        except Exception:
-            logger.exception("Failed to initialize Cloud Logging")
+        cloud_logging.Client().setup_logging(log_level=level)
+        logger.info("Logging: Cloud Logging enabled")
+    except Exception as e:  # noqa: BLE001
+        # Cloud Logging 初期化失敗でも処理は継続
+        logger.warning(
+            "Cloud Logging setup failed (fallback to std logging): %s", e)
 
 
-# アプリ起動時に設定・ログ・外部サービスクライアントを初期化する。
-settings = config.get_settings()
-setup_logging(settings)
-services = gcp_services.build_services(settings)
-docai_service = services.docai_service
+def _is_pdf_object(name: str, content_type: str | None) -> bool:
+    # contentType が来る場合もあるが、来ないこともある
+    if name.lower().endswith(".pdf"):
+        return True
+    if content_type and content_type.lower() == "application/pdf":
+        return True
+    return False
 
 
 @functions_framework.cloud_event
-def start_ocr(cloud_event: CloudEvent) -> tuple[str, int]:
+def start_ocr(event: CloudEvent) -> dict[str, Any]:
+    _setup_logging()
+
+    settings = get_settings()
+    services = build_services(settings)
+
+    data = event.data or {}
+    bucket = (data.get("bucket") or "").strip()
+    name = (data.get("name") or "").strip()
+    content_type = data.get("contentType")
+
+    logger.info(
+        "Received GCS finalize event. bucket=%s name=%s contentType=%s",
+        bucket,
+        name,
+        content_type,
+    )
+
+    # 必須チェック
+    if not bucket or not name:
+        logger.warning("Missing bucket/name in event: %s", data)
+        return {"status": "ignored", "reason": "missing bucket/name"}
+
+    # PDF以外は除外
+    if not _is_pdf_object(name, content_type):
+        logger.info("Ignored non-PDF object: %s (contentType=%s)",
+                    name, content_type)
+        return {"status": "ignored", "reason": "not pdf", "bucket": bucket, "name": name}
+
+    # Document AI submit
     try:
-        # 1) イベント基本情報を取得する（ログ/トレース用）。
-        event_id = cloud_event.get("id")
-        event_type = cloud_event.get("type")
-        # 2) Cloud Storage イベントペイロードから対象オブジェクトを取り出す。
-        data: dict[str, Any] = cloud_event.data or {}
-        bucket = data["bucket"]
-        name = data["name"]
-        generation = data.get("generation")
-
-        logger.info(
-            "OCR trigger received: event_id=%s type=%s bucket=%s name=%s generation=%s",
-            event_id,
-            event_type,
-            bucket,
-            name,
-            generation,
-        )
-
-        # 3) PDF 以外は処理対象外としてスキップする。
-        if not name.lower().endswith(".pdf"):
-            logger.info(
-                "Skipped non-PDF object: event_id=%s bucket=%s name=%s",
-                event_id,
-                bucket,
-                name,
-            )
-            return ("PDF以外のためスキップしました。", 200)
-
-        # 4) Document AI の非同期バッチ処理を起動する。
-        started_at = time.perf_counter()
-        op_name = docai_service.start_ocr_batch_job(bucket, name)
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        output_prefix = f"{settings.temp_bucket_uri()}{name}_json/"
-
-        logger.info(
-            "OCR batch submitted: event_id=%s operation=%s output_prefix=%s elapsed_ms=%d",
-            event_id,
-            op_name,
-            output_prefix,
-            elapsed_ms,
-        )
-        return ("OCR処理を開始しました。", 200)
-
-    except KeyError as e:
-        # 必須キー不足は 400 として呼び出し元へ返す。
-        logger.error(
-            "Invalid CloudEvent payload: missing_key=%s payload_keys=%s",
-            e,
-            sorted((cloud_event.data or {}).keys()),
-        )
-        return (f"不正なリクエスト: CloudEventのデータが不足しています: {e}", 400)
-
-    except Exception:
-        # 想定外の失敗は 500 として扱う。
-        logger.exception("Unexpected error while submitting OCR batch")
-        return ("サーバー内部エラー", 500)
-
-
-__all__ = ["start_ocr"]
+        op_name, output_prefix = services.docai_service.start_ocr_batch_job(
+            bucket, name)
+        return {
+            "status": "submitted",
+            "operation": op_name,
+            "output_prefix": output_prefix,
+        }
+    except Exception as e:
+        logger.exception("Unexpected error while submitting OCR batch: %s", e)
+        return {
+            "status": "error",
+            "error": str(e),
+        }
