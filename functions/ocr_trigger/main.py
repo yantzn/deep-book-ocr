@@ -7,9 +7,9 @@
 """
 
 from __future__ import annotations
-from ocr_trigger.gcp_services import build_services
-from ocr_trigger.config import get_settings
 
+
+import importlib
 import logging
 import os
 import sys
@@ -20,6 +20,10 @@ from cloudevents.http import CloudEvent
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
+config_module = importlib.import_module("ocr_trigger.config")
+gcp_services_module = importlib.import_module("ocr_trigger.gcp_services")
+get_settings = config_module.get_settings
+build_services = gcp_services_module.build_services
 
 logger = logging.getLogger(__name__)
 
