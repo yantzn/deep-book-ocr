@@ -202,7 +202,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
 
         # Buckets
         INPUT_BUCKET  = google_storage_bucket.buckets["input"].name
-        TEMP_BUCKET   = google_storage_bucket.buckets["temp"].name
+        TEMP_BUCKET   = "gs://${google_storage_bucket.buckets["temp"].name}"
         OUTPUT_BUCKET = google_storage_bucket.buckets["output"].name
       },
       var.ocr_trigger_env
