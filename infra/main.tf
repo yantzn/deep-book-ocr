@@ -198,7 +198,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       {
         # Document AI
         PROCESSOR_LOCATION = var.documentai_location
-        PROCESSOR_ID       = google_document_ai_processor.ocr_processor.id
+        PROCESSOR_ID       = element(reverse(split("/", google_document_ai_processor.ocr_processor.id)), 0)
 
         # Buckets
         INPUT_BUCKET  = google_storage_bucket.buckets["input"].name
