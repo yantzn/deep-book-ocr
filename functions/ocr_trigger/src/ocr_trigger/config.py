@@ -11,10 +11,9 @@ _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 class Settings(BaseSettings):
     """
-    ocr_trigger の実行時設定。
-
-    - APP_ENV=local|gcp で実行環境を判定
-    - Document AI は実GCPへ接続（ローカルでもOK）
+    ocr_trigger の設定。
+    - Cloud Functions / Cloud Run では環境変数で注入
+    - ローカルでは functions/ocr_trigger/.env から読み込む
     """
 
     model_config = SettingsConfigDict(
@@ -26,24 +25,25 @@ class Settings(BaseSettings):
     # local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
 
-    # logging
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-
-    # GCP
+    # GCP project
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
 
-    # Document AI
+    # Document AI processor
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
+    # processor id or full resource
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 
-    # Document AI batch submit timeout (RPC timeout; NOT job completion timeout)
-    docai_submit_timeout_sec: int = Field(
-        default=30, alias="DOCAI_SUBMIT_TIMEOUT_SEC")
-
-    # Buckets
-    # gs:// あり/なし どちらも許容
+    # Document AI output bucket (gs://... or bucket name)
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
+
+    # Logging
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # (将来拡張用) submit に時間がかかるケースに備えた設定値。
+    # 今の実装は operation を待たず即返すが、ログや検証で利用する。
+    docai_submit_timeout_sec: int = Field(
+        default=120, alias="DOCAI_SUBMIT_TIMEOUT_SEC")
 
     @property
     def is_gcp(self) -> bool:
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     def processor_id_normalized(self) -> str:
         """
         Document AI の processor_id を正規化。
-        - projects/.../locations/.../processors/... を渡されたら末尾IDにする
+        - projects/.../locations/.../processors/... を渡されたら ... の部分だけにする
         """
         v = self.processor_id.strip()
         if "/processors/" in v:
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         return v
 
     def temp_bucket_uri(self) -> str:
-        """TEMP_BUCKET を gs://.../ 形式に揃える（末尾 / 付与）。"""
+        """TEMP_BUCKET を gs://<bucket>/ 形式に揃える（末尾 / 付与）。"""
         t = self.temp_bucket.strip()
         if t.startswith("gs://"):
             return t.rstrip("/") + "/"
