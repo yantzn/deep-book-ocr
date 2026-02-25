@@ -108,6 +108,9 @@ def start_ocr(event: CloudEvent) -> tuple[str, int]:
         else:
             logger.info("Submitted operation=%s", submit_result)
         return ("OCR処理を開始しました。", 200)
+    except TimeoutError as e:
+        logger.exception("Document AI submit timed out: %s", e)
+        return ("Document AI へのリクエストがタイムアウトしました", 504)
     except Exception as e:
         logger.exception("Unexpected error while submitting OCR batch: %s", e)
         return ("サーバー内部エラー", 500)
