@@ -7,18 +7,26 @@
 """
 
 from __future__ import annotations
+from ocr_trigger.gcp_services import build_services
+from ocr_trigger.config import get_settings
 
 import logging
 import os
+import sys
 from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
 
-from ocr_trigger.config import get_settings
-from ocr_trigger.gcp_services import build_services
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
 
 logger = logging.getLogger(__name__)
+
+# モジュール初期化時に設定とサービスを構築して再利用する。
+settings = get_settings()
+services = build_services(settings)
+docai_service = services.docai_service
 
 
 def _setup_logging() -> None:
@@ -60,11 +68,8 @@ def _is_pdf_object(name: str, content_type: str | None) -> bool:
 
 
 @functions_framework.cloud_event
-def start_ocr(event: CloudEvent) -> dict[str, Any]:
+def start_ocr(event: CloudEvent) -> tuple[str, int]:
     _setup_logging()
-
-    settings = get_settings()
-    services = build_services(settings)
 
     data = event.data or {}
     bucket = (data.get("bucket") or "").strip()
@@ -81,26 +86,24 @@ def start_ocr(event: CloudEvent) -> dict[str, Any]:
     # 必須チェック
     if not bucket or not name:
         logger.warning("Missing bucket/name in event: %s", data)
-        return {"status": "ignored", "reason": "missing bucket/name"}
+        return ("不正なリクエスト: CloudEventのデータが不足しています", 400)
 
     # PDF以外は除外
     if not _is_pdf_object(name, content_type):
         logger.info("Ignored non-PDF object: %s (contentType=%s)",
                     name, content_type)
-        return {"status": "ignored", "reason": "not pdf", "bucket": bucket, "name": name}
+        return ("PDF以外のためスキップしました。", 200)
 
     # Document AI submit
     try:
-        op_name, output_prefix = services.docai_service.start_ocr_batch_job(
-            bucket, name)
-        return {
-            "status": "submitted",
-            "operation": op_name,
-            "output_prefix": output_prefix,
-        }
+        submit_result = docai_service.start_ocr_batch_job(bucket, name)
+        if isinstance(submit_result, tuple) and len(submit_result) >= 2:
+            op_name, output_prefix = submit_result[0], submit_result[1]
+            logger.info("Submitted operation=%s output_prefix=%s",
+                        op_name, output_prefix)
+        else:
+            logger.info("Submitted operation=%s", submit_result)
+        return ("OCR処理を開始しました。", 200)
     except Exception as e:
         logger.exception("Unexpected error while submitting OCR batch: %s", e)
-        return {
-            "status": "error",
-            "error": str(e),
-        }
+        return ("サーバー内部エラー", 500)
