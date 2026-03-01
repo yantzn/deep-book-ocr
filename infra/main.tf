@@ -188,7 +188,9 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   service_config {
-    available_memory      = "256M"
+    # 高スループットモード（concurrency > 1 を使うため CPU=1 を明示）
+    available_cpu         = "1"
+    available_memory      = "512M"
     timeout_seconds       = 300
     min_instance_count    = 1
     max_instance_count    = 5
