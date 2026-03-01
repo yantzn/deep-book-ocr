@@ -188,13 +188,13 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   service_config {
-    # 高スループットモード（concurrency > 1 を使うため CPU=1 を明示）
-    available_cpu         = "1"
-    available_memory      = "512M"
+    # Cloud Functions Gen2 は CPU<1 の場合 concurrency > 1 を受け付けないため、
+    # まずは concurrency=1 で安定稼働させ、水平スケールで吸収する。
+    available_memory      = "256M"
     timeout_seconds       = 300
     min_instance_count    = 1
     max_instance_count    = 5
-    max_instance_request_concurrency = 10
+    max_instance_request_concurrency = 1
     service_account_email = var.functions_service_account_email
 
     environment_variables = merge(
