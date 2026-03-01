@@ -30,8 +30,10 @@ Settings = config_module.Settings
 get_settings = config_module.get_settings
 build_services = gcp_services_module.build_services
 build_page_chunks = markdown_logic_module.build_page_chunks
+derive_json_group_prefix = markdown_logic_module.derive_json_group_prefix
 derive_output_markdown_name = markdown_logic_module.derive_output_markdown_name
 extract_text_from_page_range = markdown_logic_module.extract_text_from_page_range
+sort_json_object_names = markdown_logic_module.sort_json_object_names
 
 
 logger = logging.getLogger(__name__)
@@ -107,61 +109,99 @@ def generate_markdown(cloud_event: CloudEvent) -> tuple[str, int]:
                         event_id, bucket, name)
             return ("JSON以外のためスキップしました。", 200)
 
-        # 4) OCR 生成済み JSON を GCS から取得し、構造化データに変換する。
-        raw = services.storage.download_bytes(bucket, name)
-        logger.info("Downloaded OCR JSON: bucket=%s name=%s bytes=%d",
-                    bucket, name, len(raw))
+        # 4) 同一OCR結果グループ配下のJSONを列挙して処理対象を確定する。
+        group_prefix = derive_json_group_prefix(name)
+        all_objects = services.storage.list_object_names(bucket, group_prefix)
+        json_objects = [obj for obj in all_objects if obj.endswith(".json")]
+        if name not in json_objects:
+            json_objects.append(name)
+        json_objects = sort_json_object_names(json_objects)
 
-        doc = load_json_utf8(raw)
+        logger.info(
+            "JSON group resolved: bucket=%s trigger=%s prefix=%s json_count=%d",
+            bucket,
+            name,
+            group_prefix,
+            len(json_objects),
+        )
 
-        # 5) ページ総数を確認し、チャンク分割計画を作成する。
-        total_pages = len((doc.get("pages", []) or []))
-        if total_pages <= 0:
-            logger.warning("JSONにページが見つかりません: %s", name)
-            return ("ページが存在しません。", 200)
-
-        chunks = build_page_chunks(total_pages, settings.chunk_size)
-        logger.info("Chunk plan created: total_pages=%d chunk_size=%d chunk_count=%d",
-                    total_pages, settings.chunk_size, len(chunks))
-
-        # 6) 各チャンクのテキストを Gemini へ渡して Markdown 化する。
+        # 5) すべてのJSONを順次読み込み、チャンク単位で Markdown 化する。
         md_parts: list[str] = []
+        chunk_index = 0
 
-        for idx, ch in enumerate(chunks, start=1):
-            text = extract_text_from_page_range(
-                doc, ch.start_page, ch.end_page)
-            # 空チャンクは API コールせずにスキップする。
-            if not text.strip():
-                logger.debug("Chunk empty, skipped: chunk=%d pages=%d-%d",
-                             idx, ch.start_page + 1, ch.end_page)
-                continue
-
+        for obj_name in json_objects:
+            raw = services.storage.download_bytes(bucket, obj_name)
             logger.info(
-                "Gemini chunk start: chunk=%d/%d pages=%d-%d chars=%d",
-                idx,
-                len(chunks),
-                ch.start_page + 1,
-                ch.end_page,
-                len(text),
+                "Downloaded OCR JSON: bucket=%s name=%s bytes=%d",
+                bucket,
+                obj_name,
+                len(raw),
             )
 
-            try:
-                # チャンク単位で Markdown 変換を実行する。
-                chunk_started_at = time.perf_counter()
-                md = services.gemini.to_markdown(text)
-                md_parts.append(md)
-                logger.info("Gemini chunk done: chunk=%d output_chars=%d elapsed_ms=%d",
-                            idx, len(md), int((time.perf_counter() - chunk_started_at) * 1000))
-            except Exception as e:
-                # 1チャンク失敗時も全体処理は継続し、失敗情報を本文に残す。
-                logger.exception(
-                    "Gemini chunk failed: chunk=%d pages=%d-%d chars=%d",
-                    idx,
+            doc = load_json_utf8(raw)
+            total_pages = len((doc.get("pages", []) or []))
+            if total_pages <= 0:
+                logger.warning("JSONにページが見つかりません: %s", obj_name)
+                continue
+
+            chunks = build_page_chunks(total_pages, settings.chunk_size)
+            logger.info(
+                "Chunk plan created: object=%s total_pages=%d chunk_size=%d chunk_count=%d",
+                obj_name,
+                total_pages,
+                settings.chunk_size,
+                len(chunks),
+            )
+
+            for ch in chunks:
+                chunk_index += 1
+                text = extract_text_from_page_range(
+                    doc, ch.start_page, ch.end_page)
+                # 空チャンクは API コールせずにスキップする。
+                if not text.strip():
+                    logger.debug(
+                        "Chunk empty, skipped: object=%s chunk=%d pages=%d-%d",
+                        obj_name,
+                        chunk_index,
+                        ch.start_page + 1,
+                        ch.end_page,
+                    )
+                    continue
+
+                logger.info(
+                    "Gemini chunk start: object=%s chunk=%d pages=%d-%d chars=%d",
+                    obj_name,
+                    chunk_index,
                     ch.start_page + 1,
                     ch.end_page,
                     len(text),
                 )
-                md_parts.append(f"\n> [Error processing chunk {idx}: {e}]\n")
+
+                try:
+                    # チャンク単位で Markdown 変換を実行する。
+                    chunk_started_at = time.perf_counter()
+                    md = services.gemini.to_markdown(text)
+                    md_parts.append(md)
+                    logger.info(
+                        "Gemini chunk done: object=%s chunk=%d output_chars=%d elapsed_ms=%d",
+                        obj_name,
+                        chunk_index,
+                        len(md),
+                        int((time.perf_counter() - chunk_started_at) * 1000),
+                    )
+                except Exception as e:
+                    # 1チャンク失敗時も全体処理は継続し、失敗情報を本文に残す。
+                    logger.exception(
+                        "Gemini chunk failed: object=%s chunk=%d pages=%d-%d chars=%d",
+                        obj_name,
+                        chunk_index,
+                        ch.start_page + 1,
+                        ch.end_page,
+                        len(text),
+                    )
+                    md_parts.append(
+                        f"\n> [Error processing chunk {chunk_index} from {obj_name}: {e}]\n"
+                    )
 
         # 7) チャンク結果を結合し、最終 Markdown を組み立てる。
         final_md = "\n\n".join(md_parts).strip()

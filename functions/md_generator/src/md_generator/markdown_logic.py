@@ -8,6 +8,7 @@ I/Oや外部APIに依存しない処理を集約し、テスト容易性を高�
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+import re
 from typing import Any, Dict, List
 
 
@@ -73,6 +74,43 @@ def derive_output_markdown_name(json_object_name: str) -> str:
     - processed/sample_pdf/0.json -> sample.md
     """
     p = PurePosixPath(json_object_name)
-    parent = p.parent.name if p.parent.name else "output"
-    base = parent[:-4] if parent.endswith("_pdf") else parent
-    return f"{base}.md"
+    parts = p.parts
+
+    for part in parts:
+        if part.endswith(".pdf_json"):
+            return f"{part[:-9]}.md"
+        if part.endswith("_pdf"):
+            return f"{part[:-4]}.md"
+
+    stem = p.stem
+    stem = re.sub(r"-\d+$", "", stem)
+    if not stem:
+        stem = "output"
+    return f"{stem}.md"
+
+
+def derive_json_group_prefix(json_object_name: str) -> str:
+    """同一OCR結果グループのJSONを列挙するためのprefixを返す。"""
+    p = PurePosixPath(json_object_name)
+    parent = p.parent.as_posix()
+    if parent in ("", "."):
+        return ""
+    return f"{parent}/"
+
+
+def _extract_trailing_number(name: str) -> int:
+    stem = PurePosixPath(name).stem
+    m = re.search(r"(\d+)$", stem)
+    return int(m.group(1)) if m else -1
+
+
+def sort_json_object_names(names: List[str]) -> List[str]:
+    """JSONオブジェクト名をページ順に近い形で安定ソートする。"""
+    return sorted(
+        names,
+        key=lambda n: (
+            PurePosixPath(n).parent.as_posix(),
+            _extract_trailing_number(n),
+            PurePosixPath(n).name,
+        ),
+    )

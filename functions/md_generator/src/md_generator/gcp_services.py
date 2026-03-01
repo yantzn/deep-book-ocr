@@ -106,6 +106,12 @@ class StorageClient:
             "utf-8"), content_type=content_type)
         logger.debug("Upload completed: gs://%s/%s", bucket, name)
 
+    def list_object_names(self, bucket: str, prefix: str) -> list[str]:
+        """prefix 配下のオブジェクト名一覧を返す。"""
+        logger.debug("Listing objects: gs://%s/%s", bucket, prefix)
+        blobs = self.client.list_blobs(bucket_or_name=bucket, prefix=prefix)
+        return [blob.name for blob in blobs]
+
 
 class GeminiClient:
     """Vertex AI Gemini クライアント（ローカルでもADCで実GCPへ）。"""

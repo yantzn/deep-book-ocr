@@ -264,10 +264,11 @@ resource "google_cloudfunctions2_function" "md_generator" {
       local.common_function_env,
       {
         OUTPUT_BUCKET = google_storage_bucket.buckets["output"].name
+        GCP_LOCATION  = "us-central1"
+        MODEL_NAME    = "gemini-2.5-flash"
 
         # md_generator側で参照する値をここで固定/上書き可能
-        # MODEL_NAME       = "gemini-2.5-flash"
-        # CHUNK_SIZE       = "10"
+        # CHUNK_SIZE    = "10"
       },
       var.md_generator_env
     )

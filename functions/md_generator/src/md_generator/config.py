@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     output_bucket: str = Field(..., alias="OUTPUT_BUCKET")
 
     # 変換に使用する Gemini モデル名。
-    model_name: str = Field(default="gemini-1.5-pro", alias="MODEL_NAME")
+    model_name: str = Field(default="gemini-2.5-flash", alias="MODEL_NAME")
     # 1回の推論に渡すページ数（大きすぎると遅延/失敗率が上がる）。
     chunk_size: int = Field(default=10, alias="CHUNK_SIZE")
 
