@@ -77,3 +77,48 @@ def test_generate_markdown_bad_event_data(mock_storage, mock_gemini):
     )
     msg, code = generate_markdown(event)
     assert code == 400
+
+
+def test_generate_markdown_aggregate_multiple_json(mock_storage, mock_gemini):
+    """同一prefix配下の複数JSONを読み込み、1つのMarkdownに集約する。"""
+    doc_a = {
+        "text": "alpha",
+        "pages": [{"layout": {"textAnchor": {"textSegments": [{"startIndex": 0, "endIndex": 5}]}}}],
+    }
+    doc_b = {
+        "text": "beta",
+        "pages": [{"layout": {"textAnchor": {"textSegments": [{"startIndex": 0, "endIndex": 4}]}}}],
+    }
+
+    trigger_name = "kindle_book_test.pdf_json/711/0/kindle_book_test-1.json"
+    first_name = "kindle_book_test.pdf_json/711/0/kindle_book_test-0.json"
+
+    mock_storage.list_object_names.return_value = [trigger_name, first_name]
+
+    def _download(bucket: str, name: str):
+        if name.endswith("-0.json"):
+            return json.dumps(doc_a).encode("utf-8")
+        return json.dumps(doc_b).encode("utf-8")
+
+    mock_storage.download_bytes.side_effect = _download
+    mock_gemini.to_markdown.side_effect = ["# A", "# B"]
+
+    event = CloudEvent(
+        attributes={"type": "t", "source": "s",
+                    "id": "i", "specversion": "1.0"},
+        data={"bucket": "ignored", "name": trigger_name},
+    )
+
+    msg, code = generate_markdown(event)
+    assert code == 200
+    assert msg == "成功"
+
+    assert mock_storage.download_bytes.call_count == 2
+    dl_names = [call.args[1]
+                for call in mock_storage.download_bytes.call_args_list]
+    assert dl_names == [first_name, trigger_name]
+
+    args, kwargs = mock_storage.upload_text.call_args
+    assert args[1] == "kindle_book_test.md"
+    assert "# A" in args[2]
+    assert "# B" in args[2]
