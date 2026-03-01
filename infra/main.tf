@@ -193,7 +193,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     available_memory      = "256M"
     timeout_seconds       = 300
     min_instance_count    = 1
-    max_instance_count    = 5
+    max_instance_count    = 20
     max_instance_request_concurrency = 1
     service_account_email = var.functions_service_account_email
 
