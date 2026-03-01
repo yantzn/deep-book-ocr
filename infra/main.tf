@@ -189,6 +189,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
 
   service_config {
     available_memory      = "256M"
+    timeout_seconds       = 300
     max_instance_count    = 1
     service_account_email = var.functions_service_account_email
 
@@ -197,8 +198,9 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       local.common_function_env,
       {
         # Document AI
-        PROCESSOR_LOCATION = var.documentai_location
-        PROCESSOR_ID       = element(reverse(split("/", google_document_ai_processor.ocr_processor.id)), 0)
+        PROCESSOR_LOCATION       = var.documentai_location
+        PROCESSOR_ID             = element(reverse(split("/", google_document_ai_processor.ocr_processor.id)), 0)
+        DOCAI_SUBMIT_TIMEOUT_SEC = "60"
 
         # Buckets
         INPUT_BUCKET  = google_storage_bucket.buckets["input"].name
