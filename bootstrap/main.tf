@@ -21,6 +21,7 @@ locals {
 
   # ---- WIF/SA ----
   sa_account_id = "github-actions-sa-${local.suffix}"
+  runtime_sa_account_id = "functions-runtime-sa-${local.suffix}"
 
   wif_pool_id     = "github-actions-pool-${local.suffix}"
   wif_provider_id = "github-provider-${local.suffix}"
@@ -60,6 +61,11 @@ resource "google_service_account" "github_sa" {
   display_name = "GitHub Actions Service Account (${local.suffix})"
 }
 
+resource "google_service_account" "functions_runtime_sa" {
+  account_id   = local.runtime_sa_account_id
+  display_name = "Cloud Functions Runtime Service Account (${local.suffix})"
+}
+
 # 必要最低限の権限にするのが理想だが、
 # まず動かす段階では Editor でもOK（後で絞る）
 resource "google_project_iam_member" "github_sa_editor" {
@@ -72,6 +78,12 @@ resource "google_project_iam_member" "github_sa_pubsub_admin" {
   project = var.project_id
   role    = "roles/pubsub.admin"
   member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_runtime_sa_documentai_api_user" {
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
 }
 
 # -------------------------

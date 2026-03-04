@@ -16,6 +16,7 @@ documentai_service_agent_emails_additional = []
 # project_id                   = "deep-book-ocr"
 # region                       = "asia-northeast1"
 # functions_service_account_email = "xxx@deep-book-ocr.iam.gserviceaccount.com"
+# functions_build_service_account_email = "github-actions-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
 
 # Cloud Functions へ注入する共通アプリ設定
 app_env      = "gcp"

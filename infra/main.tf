@@ -39,7 +39,8 @@ data "google_project" "current" {
 
 locals {
   gcs_service_agent            = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
-  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
+  effective_functions_build_service_account_email = var.functions_build_service_account_email != "" ? var.functions_build_service_account_email : var.functions_service_account_email
+  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${local.effective_functions_build_service_account_email}"
 
   # Document AI service agent (default)
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
