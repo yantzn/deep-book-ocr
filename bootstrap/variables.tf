@@ -25,3 +25,9 @@ variable "rotation_key" {
   type        = string
   default     = "v1"
 }
+
+variable "functions_service_account_email" {
+  description = "Cloud Functions runtime service account email to grant Document AI API user role (optional)."
+  type        = string
+  default     = ""
+}

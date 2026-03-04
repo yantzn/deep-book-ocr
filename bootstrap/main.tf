@@ -111,3 +111,11 @@ resource "google_service_account_iam_member" "wif_workload_identity_user" {
 
   member = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.pool.name}/attribute.repository/${var.github_repository}"
 }
+
+resource "google_project_iam_member" "functions_sa_documentai_api_user" {
+  count = var.functions_service_account_email != "" ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = "serviceAccount:${var.functions_service_account_email}"
+}

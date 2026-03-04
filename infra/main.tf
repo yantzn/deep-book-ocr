@@ -80,13 +80,6 @@ resource "google_storage_bucket_iam_member" "documentai_temp_bucket_object_creat
   member = "serviceAccount:${each.key}"
 }
 
-resource "google_project_iam_member" "ocr_trigger_documentai_api_user" {
-  # ocr_trigger 実行SAに Document AI バッチ投入権限を付与
-  project = var.project_id
-  role    = "roles/documentai.apiUser"
-  member  = "serviceAccount:${var.functions_service_account_email}"
-}
-
 resource "google_pubsub_topic" "gcs_input_finalized" {
   name    = "gcs-input-finalized-${local.suffix}"
   project = var.project_id
@@ -245,7 +238,6 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   depends_on = [
     google_project_service.required,
     google_artifact_registry_repository.gcf_artifacts,
-    google_project_iam_member.ocr_trigger_documentai_api_user,
     google_storage_bucket_object.ocr_zip,
   ]
 }
