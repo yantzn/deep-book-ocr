@@ -43,6 +43,12 @@ variable "functions_service_account_email" {
   type        = string
 }
 
+variable "functions_build_service_account_email" {
+  description = "Service account email used by Cloud Functions build. If empty, functions_service_account_email is used."
+  type        = string
+  default     = ""
+}
+
 # ============================
 # Document AI バケット IAM 制御
 # ============================

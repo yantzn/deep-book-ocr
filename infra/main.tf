@@ -39,7 +39,8 @@ data "google_project" "current" {
 
 locals {
   gcs_service_agent            = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
-  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${var.functions_service_account_email}"
+  effective_functions_build_service_account_email = var.functions_build_service_account_email != "" ? var.functions_build_service_account_email : var.functions_service_account_email
+  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${local.effective_functions_build_service_account_email}"
 
   # Document AI service agent (default)
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
@@ -78,6 +79,20 @@ resource "google_storage_bucket_iam_member" "documentai_temp_bucket_object_creat
   bucket = google_storage_bucket.buckets["temp"].name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${each.key}"
+}
+
+resource "google_storage_bucket_iam_member" "functions_input_bucket_object_viewer" {
+  # Cloud Functions 実行SAに input バケット読み取りを付与
+  bucket = google_storage_bucket.buckets["input"].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.functions_service_account_email}"
+}
+
+resource "google_storage_bucket_iam_member" "functions_temp_bucket_object_creator" {
+  # Cloud Functions 実行SAに temp バケット書き込みを付与
+  bucket = google_storage_bucket.buckets["temp"].name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${var.functions_service_account_email}"
 }
 
 resource "google_pubsub_topic" "gcs_input_finalized" {
