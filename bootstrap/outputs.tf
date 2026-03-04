@@ -19,3 +19,8 @@ output "documentai_service_agent_email" {
   description = "project_id から自動算出した Document AI サービスエージェント"
   value       = local.documentai_service_agent_email
 }
+
+output "functions_service_account_for_documentai" {
+  description = "roles/documentai.apiUser を付与した Cloud Functions 実行SA（指定時のみ）"
+  value       = var.functions_service_account_email != "" ? var.functions_service_account_email : null
+}
