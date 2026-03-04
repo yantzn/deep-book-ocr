@@ -80,6 +80,20 @@ resource "google_storage_bucket_iam_member" "documentai_temp_bucket_object_creat
   member = "serviceAccount:${each.key}"
 }
 
+resource "google_storage_bucket_iam_member" "functions_input_bucket_object_viewer" {
+  # Cloud Functions 実行SAに input バケット読み取りを付与
+  bucket = google_storage_bucket.buckets["input"].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.functions_service_account_email}"
+}
+
+resource "google_storage_bucket_iam_member" "functions_temp_bucket_object_creator" {
+  # Cloud Functions 実行SAに temp バケット書き込みを付与
+  bucket = google_storage_bucket.buckets["temp"].name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${var.functions_service_account_email}"
+}
+
 resource "google_pubsub_topic" "gcs_input_finalized" {
   name    = "gcs-input-finalized-${local.suffix}"
   project = var.project_id
