@@ -15,8 +15,11 @@ documentai_service_agent_emails_additional = []
 # project_id と functions_service_account_email は環境ごとに必ず確認
 # project_id                   = "deep-book-ocr"
 # region                       = "asia-northeast1"
-# functions_service_account_email = "xxx@deep-book-ocr.iam.gserviceaccount.com"
-# functions_build_service_account_email = "github-actions-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
+# Cloud Functions の runtime / trigger は functions-runtime-sa を使う
+functions_service_account_email = "functions-runtime-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
+
+# build は GitHub Actions 用 SA を使い続ける
+functions_build_service_account_email = "github-actions-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
 
 # Cloud Functions へ注入する共通アプリ設定
 app_env      = "gcp"
