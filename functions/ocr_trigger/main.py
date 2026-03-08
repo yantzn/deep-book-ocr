@@ -100,13 +100,16 @@ def start_ocr(event: CloudEvent) -> tuple[str, int]:
 
     # Document AI submit
     try:
-        submit_result = docai_service.start_ocr_batch_job(bucket, name)
-        if isinstance(submit_result, tuple) and len(submit_result) >= 2:
-            op_name, output_prefix = submit_result[0], submit_result[1]
-            logger.info("Submitted operation=%s output_prefix=%s",
-                        op_name, output_prefix)
-        else:
-            logger.info("Submitted operation=%s", submit_result)
+
+        operation_name, output_uri = docai_service.start_ocr_batch_job(
+            bucket, name)
+        logger.info(
+            "Started OCR batch job successfully. operation=%s output_uri=%s input=gs://%s/%s",
+            operation_name,
+            output_uri,
+            bucket,
+            name,
+        )
         return ("OCR処理を開始しました。", 200)
     except TimeoutError as e:
         logger.exception("Document AI submit timed out: %s", e)
