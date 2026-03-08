@@ -68,7 +68,7 @@ class DocumentAIService:
         return self.client.processor_path(
             self.settings.gcp_project_id,
             self.settings.processor_location,
-            self.settings.processor_id,
+            self.settings.processor_id_normalized(),
         )
 
     @staticmethod
