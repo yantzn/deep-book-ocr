@@ -29,3 +29,11 @@ output "documentai_service_agent_emails_effective" {
 output "documentai_bucket_iam_enabled" {
   value = var.enable_documentai_bucket_iam
 }
+
+output "functions_runtime_service_account_email" {
+  value = var.functions_service_account_email
+}
+
+output "functions_build_service_account_email_effective" {
+  value = local.effective_functions_build_service_account_email
+}
