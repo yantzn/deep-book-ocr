@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
-from typing import Any
 
 from google.api_core.client_options import ClientOptions
 from google.cloud import documentai_v1 as documentai
@@ -24,8 +22,12 @@ class GCSService:
         bucket = self.client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
         exists = blob.exists()
-        logger.info("Checked blob existence: gs://%s/%s exists=%s",
-                    bucket_name, blob_name, exists)
+        logger.info(
+            "Checked blob existence: gs://%s/%s exists=%s",
+            bucket_name,
+            blob_name,
+            exists,
+        )
         return exists
 
 
@@ -34,10 +36,13 @@ class DocumentAIService:
         self.settings = settings
         self.api_endpoint = self._build_api_endpoint(
             settings.processor_location)
+
         client_options = (
-            ClientOptions(
-                api_endpoint=self.api_endpoint) if self.api_endpoint else None
+            ClientOptions(api_endpoint=self.api_endpoint)
+            if self.api_endpoint
+            else None
         )
+
         self.client = documentai.DocumentProcessorServiceClient(
             client_options=client_options
         )
@@ -66,7 +71,8 @@ class DocumentAIService:
             self.settings.processor_id,
         )
 
-    def _build_input_uri(self, input_bucket: str, file_name: str) -> str:
+    @staticmethod
+    def _build_input_uri(input_bucket: str, file_name: str) -> str:
         return f"gs://{input_bucket}/{file_name}"
 
     def _build_output_uri(self, file_name: str) -> str:
@@ -121,50 +127,26 @@ class DocumentAIService:
 
         started_at = time.perf_counter()
 
-        def _submit() -> Any:
-            return self.client.batch_process_documents(
+        try:
+            operation = self.client.batch_process_documents(
                 request=request,
                 retry=None,
                 timeout=self.settings.docai_submit_timeout_sec,
             )
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_submit)
-
-            try:
-                operation = future.result(
-                    timeout=self.settings.docai_submit_timeout_sec)
-            except FuturesTimeoutError as exc:
-                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-                future.cancel()
-                logger.exception(
-                    "Document AI batch submit timed out: elapsed_ms=%s project=%s "
-                    "location=%s endpoint=%s processor_name=%s input_uri=%s output_uri=%s",
-                    elapsed_ms,
-                    self.settings.gcp_project_id,
-                    self.settings.processor_location,
-                    self.api_endpoint or "default",
-                    processor_name,
-                    input_uri,
-                    output_uri,
-                )
-                raise TimeoutError(
-                    "Document AI batch submission timed out before operation was returned"
-                ) from exc
-            except Exception:
-                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-                logger.exception(
-                    "Document AI batch submit failed: elapsed_ms=%s project=%s "
-                    "location=%s endpoint=%s processor_name=%s input_uri=%s output_uri=%s",
-                    elapsed_ms,
-                    self.settings.gcp_project_id,
-                    self.settings.processor_location,
-                    self.api_endpoint or "default",
-                    processor_name,
-                    input_uri,
-                    output_uri,
-                )
-                raise
+        except Exception:
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.exception(
+                "Document AI batch submit failed: elapsed_ms=%s project=%s "
+                "location=%s endpoint=%s processor_name=%s input_uri=%s output_uri=%s",
+                elapsed_ms,
+                self.settings.gcp_project_id,
+                self.settings.processor_location,
+                self.api_endpoint or "default",
+                processor_name,
+                input_uri,
+                output_uri,
+            )
+            raise
 
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         operation_name = getattr(
