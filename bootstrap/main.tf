@@ -19,12 +19,11 @@ locals {
   # ---- tfstate bucket ----
   tfstate_bucket_name = "${var.project_id}-tfstate-${local.suffix}"
 
-  # ---- WIF/SA ----
-  sa_account_id = "github-actions-sa-${local.suffix}"
+  # ---- WIF / SA ----
+  sa_account_id         = "github-actions-sa-${local.suffix}"
   runtime_sa_account_id = "functions-runtime-sa-${local.suffix}"
-
-  wif_pool_id     = "github-actions-pool-${local.suffix}"
-  wif_provider_id = "github-provider-${local.suffix}"
+  wif_pool_id           = "github-actions-pool-${local.suffix}"
+  wif_provider_id       = "github-provider-${local.suffix}"
 }
 
 data "google_project" "current" {
@@ -40,11 +39,11 @@ locals {
 # 1) Terraform state bucket (GCS backend 用)
 # -------------------------
 resource "google_storage_bucket" "tfstate" {
-  name          = local.tfstate_bucket_name
-  location      = var.tfstate_location
-  storage_class = "STANDARD"
-
+  name                        = local.tfstate_bucket_name
+  location                    = var.tfstate_location
+  storage_class               = "STANDARD"
   uniform_bucket_level_access = true
+
   versioning {
     enabled = true
   }
@@ -54,7 +53,7 @@ resource "google_storage_bucket" "tfstate" {
 }
 
 # -------------------------
-# 2) GitHub Actions 用 Service Account
+# 2) Service Accounts
 # -------------------------
 resource "google_service_account" "github_sa" {
   account_id   = local.sa_account_id
@@ -66,8 +65,7 @@ resource "google_service_account" "functions_runtime_sa" {
   display_name = "Cloud Functions Runtime Service Account (${local.suffix})"
 }
 
-# 必要最低限の権限にするのが理想だが、
-# まず動かす段階では Editor でもOK（後で絞る）
+# GitHub Actions 用
 resource "google_project_iam_member" "github_sa_editor" {
   project = var.project_id
   role    = "roles/editor"
@@ -80,9 +78,16 @@ resource "google_project_iam_member" "github_sa_pubsub_admin" {
   member  = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+# Cloud Functions runtime 用
 resource "google_project_iam_member" "functions_runtime_sa_documentai_api_user" {
   project = var.project_id
   role    = "roles/documentai.apiUser"
+  member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
+}
+
+resource "google_project_iam_member" "functions_runtime_sa_eventarc_event_receiver" {
+  project = var.project_id
+  role    = "roles/eventarc.eventReceiver"
   member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
 }
 
@@ -105,11 +110,11 @@ resource "google_iam_workload_identity_pool_provider" "provider" {
 
   # GitHub OIDC の属性マッピング
   attribute_mapping = {
-    "google.subject"             = "assertion.sub"
-    "attribute.actor"            = "assertion.actor"
-    "attribute.repository"       = "assertion.repository"
+    "google.subject"            = "assertion.sub"
+    "attribute.actor"           = "assertion.actor"
+    "attribute.repository"      = "assertion.repository"
     "attribute.repository_owner" = "assertion.repository_owner"
-    "attribute.ref"              = "assertion.ref"
+    "attribute.ref"             = "assertion.ref"
   }
 
   # このリポジトリだけ許可（最重要）
@@ -120,6 +125,5 @@ resource "google_iam_workload_identity_pool_provider" "provider" {
 resource "google_service_account_iam_member" "wif_workload_identity_user" {
   service_account_id = google_service_account.github_sa.name
   role               = "roles/iam.workloadIdentityUser"
-
-  member = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.pool.name}/attribute.repository/${var.github_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.pool.name}/attribute.repository/${var.github_repository}"
 }
