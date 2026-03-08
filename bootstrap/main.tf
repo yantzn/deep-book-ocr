@@ -97,6 +97,12 @@ resource "google_project_iam_member" "functions_runtime_sa_run_invoker" {
   member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
 }
 
+resource "google_project_iam_member" "github_sa_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
 # -------------------------
 # 3) Workload Identity Pool / Provider
 # -------------------------
