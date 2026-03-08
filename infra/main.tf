@@ -38,9 +38,9 @@ data "google_project" "current" {
 }
 
 locals {
-  gcs_service_agent            = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
+  gcs_service_agent                               = "service-${data.google_project.current.number}@gs-project-accounts.iam.gserviceaccount.com"
   effective_functions_build_service_account_email = var.functions_build_service_account_email != "" ? var.functions_build_service_account_email : var.functions_service_account_email
-  functions_build_service_account = "projects/${var.project_id}/serviceAccounts/${local.effective_functions_build_service_account_email}"
+  functions_build_service_account                 = "projects/${var.project_id}/serviceAccounts/${local.effective_functions_build_service_account_email}"
 
   # Document AI service agent (default)
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
@@ -205,12 +205,12 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   service_config {
     # Cloud Functions Gen2 は CPU<1 の場合 concurrency > 1 を受け付けないため、
     # まずは concurrency=1 で安定稼働させ、水平スケールで吸収する。
-    available_memory      = "256M"
-    timeout_seconds       = 300
-    min_instance_count    = 1
-    max_instance_count    = 20
+    available_memory                 = "256M"
+    timeout_seconds                  = 300
+    min_instance_count               = 1
+    max_instance_count               = 20
     max_instance_request_concurrency = 1
-    service_account_email = var.functions_service_account_email
+    service_account_email            = var.functions_service_account_email
 
     environment_variables = merge(
       # 共通env → 関数専用既定値 → tfvars からの上書き値 の順
@@ -320,4 +320,24 @@ resource "google_cloudfunctions2_function" "md_generator" {
     google_artifact_registry_repository.gcf_artifacts,
     google_storage_bucket_object.md_zip,
   ]
+}
+
+resource "google_cloud_run_service_iam_member" "ocr_trigger_eventarc_invoker" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.ocr_trigger.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.functions_service_account_email}"
+
+  depends_on = [google_cloudfunctions2_function.ocr_trigger]
+}
+
+resource "google_cloud_run_service_iam_member" "md_generator_eventarc_invoker" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.md_generator.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.functions_service_account_email}"
+
+  depends_on = [google_cloudfunctions2_function.md_generator]
 }
