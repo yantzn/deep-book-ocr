@@ -8,12 +8,10 @@
 
 from __future__ import annotations
 
-
 import importlib
 import logging
 import os
 import sys
-from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
@@ -22,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 config_module = importlib.import_module("ocr_trigger.config")
 gcp_services_module = importlib.import_module("ocr_trigger.gcp_services")
+
 get_settings = config_module.get_settings
 build_services = gcp_services_module.build_services
 
@@ -36,13 +35,13 @@ docai_service = services.docai_service
 def _setup_logging() -> None:
     """
     ローカル:
-      - 標準loggingのみ
+    - 標準loggingのみ
+
     GCP:
-      - google-cloud-logging が入っていれば Cloud Logging に統合
+    - google-cloud-logging が入っていれば Cloud Logging に統合
     """
     settings = get_settings()
 
-    # まず標準logging
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(level=level)
 
@@ -50,20 +49,19 @@ def _setup_logging() -> None:
         logger.info("Logging: local mode (standard logging)")
         return
 
-    # GCP のときだけ Cloud Logging
     try:
         from google.cloud import logging as cloud_logging  # type: ignore
 
         cloud_logging.Client().setup_logging(log_level=level)
         logger.info("Logging: Cloud Logging enabled")
     except Exception as e:  # noqa: BLE001
-        # Cloud Logging 初期化失敗でも処理は継続
         logger.warning(
-            "Cloud Logging setup failed (fallback to std logging): %s", e)
+            "Cloud Logging setup failed (fallback to std logging): %s",
+            e,
+        )
 
 
 def _is_pdf_object(name: str, content_type: str | None) -> bool:
-    # contentType が来る場合もあるが、来ないこともある
     if name.lower().endswith(".pdf"):
         return True
     if content_type and content_type.lower() == "application/pdf":
@@ -87,33 +85,22 @@ def start_ocr(event: CloudEvent) -> tuple[str, int]:
         content_type,
     )
 
-    # 必須チェック
     if not bucket or not name:
         logger.warning("Missing bucket/name in event: %s", data)
         return ("不正なリクエスト: CloudEventのデータが不足しています", 400)
 
-    # PDF以外は除外
     if not _is_pdf_object(name, content_type):
         logger.info("Ignored non-PDF object: %s (contentType=%s)",
                     name, content_type)
         return ("PDF以外のためスキップしました。", 200)
 
-    # Document AI submit
     try:
-
-        operation_name, output_uri = docai_service.start_ocr_batch_job(
+        op_name, output_prefix = docai_service.start_ocr_batch_job(
             bucket, name)
-        logger.info(
-            "Started OCR batch job successfully. operation=%s output_uri=%s input=gs://%s/%s",
-            operation_name,
-            output_uri,
-            bucket,
-            name,
-        )
+        logger.info("Submitted operation=%s output_prefix=%s",
+                    op_name, output_prefix)
         return ("OCR処理を開始しました。", 200)
-    except TimeoutError as e:
-        logger.exception("Document AI submit timed out: %s", e)
-        return ("Document AI へのリクエストがタイムアウトしました", 504)
+
     except Exception as e:
         logger.exception("Unexpected error while submitting OCR batch: %s", e)
         return ("サーバー内部エラー", 500)
