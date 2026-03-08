@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 import sys
 
-from cloudevents.http import CloudEvent
-
 
 def _ensure_venv_python() -> None:
     base_dir = os.path.dirname(__file__)
@@ -47,6 +45,7 @@ def _bootstrap_env() -> None:
 _ensure_venv_python()
 _bootstrap_env()
 
+from cloudevents.http import CloudEvent  # noqa: E402
 from main import generate_markdown  # noqa: E402
 
 

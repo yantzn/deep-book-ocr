@@ -1,126 +1,207 @@
 from __future__ import annotations
 
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
+from typing import Any
 
-from google.api_core.exceptions import DeadlineExceeded
-from google.api_core.exceptions import GoogleAPICallError
-from google.api_core.exceptions import RetryError
+from google.api_core.client_options import ClientOptions
 from google.cloud import documentai_v1 as documentai
+from google.cloud import storage
 
 from .config import Settings
 
 logger = logging.getLogger(__name__)
 
 
-class DocumentAIService:
-    """Google Cloud Document AI を呼び出すサービス層。"""
-
+class GCSService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = documentai.DocumentProcessorServiceClient()
+        self.client = storage.Client(project=settings.gcp_project_id)
 
-    def build_output_prefix(self, input_object_name: str) -> str:
+    def blob_exists(self, bucket_name: str, blob_name: str) -> bool:
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        exists = blob.exists()
+        logger.info("Checked blob existence: gs://%s/%s exists=%s",
+                    bucket_name, blob_name, exists)
+        return exists
+
+
+class DocumentAIService:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.api_endpoint = self._build_api_endpoint(
+            settings.processor_location)
+        client_options = (
+            ClientOptions(
+                api_endpoint=self.api_endpoint) if self.api_endpoint else None
+        )
+        self.client = documentai.DocumentProcessorServiceClient(
+            client_options=client_options
+        )
+
+    @staticmethod
+    def _build_api_endpoint(location: str) -> str | None:
         """
-        Document AI の GCS 出力先は「ディレクトリURI」。
-        例: gs://temp-bucket/uploads/a.pdf_json/
+        Document AI は `us` の場合はデフォルト endpoint でも動くことが多いが、
+        `eu` や `asia-northeast1` など regional processor の場合は
+        regional endpoint を明示した方が安全。
         """
-        # object 名そのまま使うと / を含むので prefix 側も階層化される（意図通りならOK）
-        return f"{self.settings.temp_bucket_uri()}{input_object_name}_json/"
+        normalized = (location or "").strip().lower()
+
+        if not normalized or normalized == "us":
+            return None
+
+        if normalized == "eu":
+            return "eu-documentai.googleapis.com"
+
+        return f"{normalized}-documentai.googleapis.com"
+
+    def _build_processor_name(self) -> str:
+        return self.client.processor_path(
+            self.settings.gcp_project_id,
+            self.settings.processor_location,
+            self.settings.processor_id,
+        )
+
+    def _build_input_uri(self, input_bucket: str, file_name: str) -> str:
+        return f"gs://{input_bucket}/{file_name}"
+
+    def _build_output_uri(self, file_name: str) -> str:
+        base = self.settings.temp_bucket_uri()
+        if not base.endswith("/"):
+            base += "/"
+        return f"{base}{file_name}_json/"
 
     def start_ocr_batch_job(self, input_bucket: str, file_name: str) -> tuple[str, str]:
         """
-        BatchProcess を起動して operation name を返す。
-        NOTE:
-        - ここで operation の完了待ちはしない（timeout/ブロック回避）
-        - 完了や失敗は Document AI 側が実行し、結果は GCS（TEMP_BUCKET）に出る
+        Document AI の batch OCR ジョブを投入する。
+        戻り値:
+            (operation_name, output_uri)
         """
-        logger.info("Starting OCR batch job. input=gs://%s/%s",
-                    input_bucket, file_name)
+        processor_name = self._build_processor_name()
+        input_uri = self._build_input_uri(input_bucket, file_name)
+        output_uri = self._build_output_uri(file_name)
 
-        # PROCESSOR_ID は短縮ID/フルリソースどちらでも受けられるため、ここで短縮IDへ正規化する。
-        processor_id = self.settings.processor_id_normalized()
-        # Document AI API が要求する Processor の完全リソース名を組み立てる。
-        processor_name = self.client.processor_path(
+        logger.info(
+            "Starting Document AI batch submit: project=%s location=%s endpoint=%s "
+            "processor_id=%s processor_name=%s input_uri=%s output_uri=%s submit_timeout_sec=%s",
             self.settings.gcp_project_id,
             self.settings.processor_location,
-            processor_id,
+            self.api_endpoint or "default",
+            self.settings.processor_id,
+            processor_name,
+            input_uri,
+            output_uri,
+            self.settings.docai_submit_timeout_sec,
         )
 
-        # ---- input ----
         gcs_document = documentai.GcsDocument(
-            gcs_uri=f"gs://{input_bucket}/{file_name}",
+            gcs_uri=input_uri,
             mime_type="application/pdf",
         )
+
         input_config = documentai.BatchDocumentsInputConfig(
             gcs_documents=documentai.GcsDocuments(documents=[gcs_document])
         )
 
-        # ---- output ----
-        # 出力先は「ファイル」ではなく prefix（ディレクトリ）指定。
-        # Document AI 側で page/json など複数オブジェクトがこの配下に出力される。
-        output_prefix = self.build_output_prefix(file_name)
-        gcs_output_config = documentai.DocumentOutputConfig.GcsOutputConfig(
-            gcs_uri=output_prefix
-        )
-        document_output_config = documentai.DocumentOutputConfig(
-            gcs_output_config=gcs_output_config
+        output_config = documentai.DocumentOutputConfig(
+            gcs_output_config=documentai.DocumentOutputConfig.GcsOutputConfig(
+                gcs_uri=output_uri
+            )
         )
 
         request = documentai.BatchProcessRequest(
             name=processor_name,
             input_documents=input_config,
-            document_output_config=document_output_config,
+            document_output_config=output_config,
         )
 
-        # Cloud Functions のリクエストを長時間占有しないため、
-        # submit RPC 自体にも短い timeout をかける（処理完了待ちは別物）。
-        submit_timeout_sec = max(
-            1, int(self.settings.docai_submit_timeout_sec))
-        logger.info(
-            "Submitting Document AI batch request with timeout=%ss", submit_timeout_sec
-        )
+        started_at = time.perf_counter()
 
-        try:
-            operation = self.client.batch_process_documents(
+        def _submit() -> Any:
+            return self.client.batch_process_documents(
                 request=request,
-                timeout=submit_timeout_sec,
+                retry=None,
+                timeout=self.settings.docai_submit_timeout_sec,
             )
-        except (DeadlineExceeded, RetryError) as exc:
-            # ここは「submit 受付」段階のタイムアウト。
-            # OCR本体の実行タイムアウトではない点に注意。
-            logger.exception(
-                "Document AI submit timed out after %ss. processor=%s input=gs://%s/%s output_prefix=%s",
-                submit_timeout_sec,
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_submit)
+
+            try:
+                operation = future.result(
+                    timeout=self.settings.docai_submit_timeout_sec)
+            except FuturesTimeoutError as exc:
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                future.cancel()
+                logger.exception(
+                    "Document AI batch submit timed out: elapsed_ms=%s project=%s "
+                    "location=%s endpoint=%s processor_name=%s input_uri=%s output_uri=%s",
+                    elapsed_ms,
+                    self.settings.gcp_project_id,
+                    self.settings.processor_location,
+                    self.api_endpoint or "default",
+                    processor_name,
+                    input_uri,
+                    output_uri,
+                )
+                raise TimeoutError(
+                    "Document AI batch submission timed out before operation was returned"
+                ) from exc
+            except Exception:
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.exception(
+                    "Document AI batch submit failed: elapsed_ms=%s project=%s "
+                    "location=%s endpoint=%s processor_name=%s input_uri=%s output_uri=%s",
+                    elapsed_ms,
+                    self.settings.gcp_project_id,
+                    self.settings.processor_location,
+                    self.api_endpoint or "default",
+                    processor_name,
+                    input_uri,
+                    output_uri,
+                )
+                raise
+
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        operation_name = getattr(
+            getattr(operation, "operation", None), "name", None)
+
+        if not operation_name:
+            logger.error(
+                "Document AI returned operation without name: project=%s location=%s "
+                "endpoint=%s processor_name=%s input_uri=%s output_uri=%s raw_operation=%r",
+                self.settings.gcp_project_id,
+                self.settings.processor_location,
+                self.api_endpoint or "default",
                 processor_name,
-                input_bucket,
-                file_name,
-                output_prefix,
+                input_uri,
+                output_uri,
+                operation,
             )
-            raise TimeoutError("Document AI submit timed out") from exc
-        except GoogleAPICallError as exc:
-            # 権限不足・無効な processor・API 側エラーなどをここで捕捉する。
-            logger.exception(
-                "Document AI API call failed. processor=%s input=gs://%s/%s output_prefix=%s error=%s",
-                processor_name,
-                input_bucket,
-                file_name,
-                output_prefix,
-                exc,
-            )
-            raise
+            raise RuntimeError(
+                "Document AI returned an invalid operation response")
 
-        # 返る operation 名を保持しておくと、後から運用ログで追跡しやすい。
-        op_name = operation.operation.name
-        logger.info("Submitted Document AI batch operation: %s", op_name)
-        logger.info("Expected output prefix: %s", output_prefix)
-
-        return op_name, output_prefix
+        logger.info(
+            "Document AI batch accepted: operation=%s elapsed_ms=%s output_uri=%s",
+            operation_name,
+            elapsed_ms,
+            output_uri,
+        )
+        return operation_name, output_uri
 
 
+@dataclass(frozen=True)
 class Services:
-    def __init__(self, settings: Settings):
-        self.docai_service = DocumentAIService(settings)
+    gcs_service: GCSService
+    docai_service: DocumentAIService
 
 
 def build_services(settings: Settings) -> Services:
-    return Services(settings)
+    return Services(
+        gcs_service=GCSService(settings),
+        docai_service=DocumentAIService(settings),
+    )

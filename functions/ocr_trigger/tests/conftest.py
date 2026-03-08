@@ -14,4 +14,8 @@ def mock_docai_service() -> MagicMock:
     main.docai_service を差し替え、モックを返す。
     """
     with patch("main.docai_service") as mock_service:
+        mock_service.start_ocr_batch_job.return_value = (
+            "operations/local-test",
+            "gs://temp-bucket/uploads/test.pdf_json/",
+        )
         yield mock_service
