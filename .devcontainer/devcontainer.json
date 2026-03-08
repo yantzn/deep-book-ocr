@@ -1,17 +1,21 @@
 {
-  "name": "deep-book-ocr-dev",
+  "name": "deep-book-ocr",
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "features": {},
+  "postCreateCommand": "python --version && terraform -version && gcloud --version",
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
-        "ms-python.vscode-pylance",
-        "charliermarsh.ruff"
-      ]
+        "hashicorp.terraform",
+        "googlecloudtools.cloudcode"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "terraform.languageServer.enable": true
+      }
     }
   }
 }

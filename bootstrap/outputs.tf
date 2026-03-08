@@ -11,8 +11,8 @@ output "functions_runtime_service_account" {
 }
 
 output "wif_provider_name" {
-  # GitHub Actions の secrets.WIF_PROVIDER に入れる値
-  value = google_iam_workload_identity_pool_provider.provider.name
+  description = "GitHub Actions の secrets.WIF_PROVIDER に入れる値"
+  value       = google_iam_workload_identity_pool_provider.provider.name
 }
 
 output "wif_pool_name" {
@@ -22,4 +22,11 @@ output "wif_pool_name" {
 output "documentai_service_agent_email" {
   description = "project_id から自動算出した Document AI サービスエージェント"
   value       = local.documentai_service_agent_email
+}
+
+output "functions_runtime_roles_summary" {
+  value = [
+    "roles/documentai.apiUser",
+    "roles/eventarc.eventReceiver",
+  ]
 }
