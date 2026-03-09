@@ -109,6 +109,13 @@ resource "google_storage_bucket_iam_member" "functions_output_bucket_object_crea
   member = "serviceAccount:${var.functions_service_account_email}"
 }
 
+resource "google_project_iam_member" "functions_runtime_sa_aiplatform_user" {
+  # Cloud Functions 実行SAに Vertex AI 推論権限を付与（Gemini 呼び出し用）
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${var.functions_service_account_email}"
+}
+
 resource "google_pubsub_topic" "gcs_input_finalized" {
   name    = "gcs-input-finalized-${local.suffix}"
   project = var.project_id
