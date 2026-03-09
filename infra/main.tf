@@ -95,6 +95,20 @@ resource "google_storage_bucket_iam_member" "functions_temp_bucket_object_creato
   member = "serviceAccount:${var.functions_service_account_email}"
 }
 
+resource "google_storage_bucket_iam_member" "functions_temp_bucket_object_viewer" {
+  # Cloud Functions 実行SAに temp バケット配下を list/get できるようにする
+  bucket = google_storage_bucket.buckets["temp"].name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${var.functions_service_account_email}"
+}
+
+resource "google_storage_bucket_iam_member" "functions_output_bucket_object_creator" {
+  # Cloud Functions 実行SAに output バケット書き込みを付与
+  bucket = google_storage_bucket.buckets["output"].name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${var.functions_service_account_email}"
+}
+
 resource "google_pubsub_topic" "gcs_input_finalized" {
   name    = "gcs-input-finalized-${local.suffix}"
   project = var.project_id
