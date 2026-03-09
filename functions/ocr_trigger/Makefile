@@ -2,18 +2,21 @@ SHELL := /bin/bash
 .ONESHELL:
 
 VENV := .venv
+PYTHON ?= python3
 PY := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
 
 .PHONY: venv
 venv:
-	@test -d $(VENV) || python -m venv $(VENV)
-	@$(PIP) install -U pip
+	@if [ ! -x "$(PY)" ]; then \
+		rm -rf $(VENV); \
+		$(PYTHON) -m venv $(VENV); \
+	fi
+	@$(PY) -m pip install -U pip
 
 .PHONY: install
 install: venv
-	@$(PIP) install -r requirements.txt
-	@$(PIP) install -r requirements-dev.txt
+	@$(PY) -m pip install -r requirements.txt
+	@$(PY) -m pip install -r requirements-dev.txt
 
 .PHONY: run
 run: venv

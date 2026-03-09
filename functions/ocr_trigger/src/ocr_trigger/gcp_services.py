@@ -16,14 +16,7 @@ logger = logging.getLogger(__name__)
 class GCSService:
     def __init__(self, settings: Settings):
         self.settings = settings
-
-        started_at = time.perf_counter()
         self.client = storage.Client(project=settings.gcp_project_id)
-        logger.info(
-            "Initialized GCS client: project=%s elapsed_ms=%s",
-            settings.gcp_project_id,
-            int((time.perf_counter() - started_at) * 1000),
-        )
 
     def blob_exists(self, bucket_name: str, blob_name: str) -> bool:
         bucket = self.client.bucket(bucket_name)
