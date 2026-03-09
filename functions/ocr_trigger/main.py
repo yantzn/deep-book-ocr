@@ -30,12 +30,6 @@ build_services = gcp_services_module.build_services
 
 logger = logging.getLogger(__name__)
 
-# モジュール初期化時に設定とサービスを構築して再利用する
-settings = get_settings()
-services = build_services(settings)
-docai_service = services.docai_service
-gcs_service = services.gcs_service
-
 # cold start 判定
 _COLD_START = True
 
@@ -103,6 +97,12 @@ def start_ocr(event: CloudEvent) -> tuple[str, int]:
 
     _setup_logging()
 
+    # ロギング初期化後に設定とサービスを構築する
+    settings = get_settings()
+    services = build_services(settings)
+    docai_service = services.docai_service
+    gcs_service = services.gcs_service
+
     logger.info(
         "[%s] start_ocr entered cold_start=%s pid=%s service=%s revision=%s",
         request_id,
@@ -152,7 +152,6 @@ def start_ocr(event: CloudEvent) -> tuple[str, int]:
             )
             return ("PDF以外のためスキップしました。", 200)
 
-        # GCS 側の見え方を明示確認
         probe_started = time.perf_counter()
         blob_meta = gcs_service.get_blob_metadata(bucket, name)
         logger.info(
