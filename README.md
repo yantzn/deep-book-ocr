@@ -176,7 +176,7 @@ tfstate_bucket    = "deep-book-ocr-tfstate"
 ```bash
 cd bootstrap
 terraform init -reconfigure
-terraform apply -auto-approve -var-file=../terraform.tfvars
+terraform apply -auto-approve -var-file=./terraform.tfvars
 ```
 
 確認用（Document AIサービスエージェント）:

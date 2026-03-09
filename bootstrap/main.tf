@@ -91,6 +91,12 @@ resource "google_project_iam_member" "functions_runtime_sa_eventarc_event_receiv
   member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
 }
 
+resource "google_project_iam_member" "functions_runtime_sa_aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
+}
+
 resource "google_project_iam_member" "functions_runtime_sa_run_invoker" {
   project = var.project_id
   role    = "roles/run.invoker"
