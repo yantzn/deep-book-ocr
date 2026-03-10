@@ -29,6 +29,8 @@ locals {
 
   runtime_sa_member  = "serviceAccount:${var.functions_runtime_service_account_email}"
   workflow_sa_member = "serviceAccount:${var.workflow_runner_service_account_email}"
+
+  github_actions_service_account_resource = "projects/${var.project_id}/serviceAccounts/${var.github_actions_service_account_email}"
 }
 
 #
@@ -215,7 +217,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   build_config {
     runtime         = "python310"
     entry_point     = "start_ocr"
-    service_account = var.github_actions_service_account_email
+    service_account = local.github_actions_service_account_resource
 
     source {
       storage_source {
@@ -293,7 +295,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
   build_config {
     runtime         = "python310"
     entry_point     = "generate_markdown"
-    service_account = var.github_actions_service_account_email
+    service_account = local.github_actions_service_account_resource
 
     source {
       storage_source {
