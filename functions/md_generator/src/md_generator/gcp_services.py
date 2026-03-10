@@ -1,169 +1,115 @@
 from __future__ import annotations
 
-"""
-md_generator の GCP 連携層。
-
-このモジュールの責務:
-- GCS から OCR JSON を読み込む（StorageClient）
-- Gemini へテキストを渡して Markdown 化する（GeminiClient）
-- entrypoint へ両者をまとめて提供する（Services / build_services）
-
-ビジネスロジック（ページ分割やJSON解析）は entrypoint / markdown_logic 側で扱い、
-ここでは外部サービス呼び出しに集中する。
-"""
-
-import logging
-import time
+import json
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
-import vertexai
 from google.cloud import storage
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai import init as vertexai_init
+from vertexai.generative_models import GenerativeModel
 
 from .config import Settings
 
-logger = logging.getLogger(__name__)
 
-# md_generator の整形方針はこの命令文を単一ソースとして固定する。
-# 運用上の再現性確保のため、実行時に外部入力で差し替えない。
-SYS_INSTRUCTION = """
-You are an expert editor converting OCR text from books into clean, faithful Markdown.
-
-GOAL
-- Reconstruct the original content as accurately as possible.
-- Improve readability with Markdown structure without changing meaning.
-
-STRICT RULES
-- Do NOT summarize.
-- Do NOT invent missing content.
-- Preserve the original language of the source text.
-- If the source text is Japanese, output must be Japanese.
-- Fix OCR errors only when the correction is obvious and certain.
-- If uncertain, keep the original text as-is.
-
-CLEANUP
-- Remove repeated noise such as page numbers, running headers, footers, and watermarks.
-- If the same line repeats across pages, keep it only once.
-
-STRUCTURE
-- Use headings (#, ##, ###) only when the section structure is clear from the text.
-- Preserve paragraph breaks; do not merge unrelated paragraphs.
-- Preserve lists (bullets/numbering) and indentation.
-
-TECHNICAL BOOK HANDLING
-- Detect code, CLI commands, config files, and logs; wrap them in fenced code blocks.
-- Infer the most likely language for the fence (e.g., python, bash, json, yaml, sql, text).
-- Preserve code and symbols exactly when possible (punctuation, brackets, quotes, backticks).
-- For tables, use Markdown tables if clearly tabular; otherwise keep as preformatted text.
-
-SELF-DEVELOPMENT / NONFICTION HANDLING
-- Preserve quotes and emphasized sentences.
-- If the author clearly highlights a “key takeaway”, keep it prominent using bold or blockquotes.
-- Do not add interpretations or commentary.
-
-OUTPUT
-- Output valid Markdown only.
-- No additional explanations outside the Markdown.
-- Do not translate unless the source text itself is translated.
-"""
-
-# charset を明示（ビューア/環境依存での文字化けを防ぐ）
-MD_CONTENT_TYPE = "text/markdown; charset=utf-8"
+def _parse_gs_uri(gs_uri: str) -> tuple[str, str]:
+    # `gs://bucket/prefix...` を (bucket, prefix) へ分解する共通ヘルパ。
+    # Storage API 呼び出し前に形式不正を早期検知する。
+    if not gs_uri.startswith("gs://"):
+        raise ValueError(f"Invalid gs:// URI: {gs_uri}")
+    parsed = urlparse(gs_uri)
+    bucket = parsed.netloc
+    prefix = parsed.path.lstrip("/")
+    return bucket, prefix
 
 
-class StorageClient:
-    """実GCS用の Storage アダプタ。"""
-
+class StorageService:
     def __init__(self, settings: Settings):
-        # project を明示しておくと、ADC複数設定時の誤接続を防ぎやすい
+        self.settings = settings
+        # すべての GCS 操作を同一 project コンテキストで実行する。
         self.client = storage.Client(project=settings.gcp_project_id)
 
-    def download_bytes(self, bucket: str, name: str) -> bytes:
-        """GCSオブジェクトを bytes として取得する。"""
-        # 1) 対象オブジェクトを特定してダウンロードする。
-        logger.debug("Downloading object: gs://%s/%s", bucket, name)
-        blob = self.client.bucket(bucket).blob(name)
-        data = blob.download_as_bytes()
-        logger.debug("Downloaded bytes: gs://%s/%s size=%d",
-                     bucket, name, len(data))
-        return data
+    def list_object_names(self, bucket_name: str, prefix: str) -> list[str]:
+        # OCR 出力 JSON はページ順の処理が重要なため、呼び出し側で
+        # 安定して扱えるよう名前順ソートで返す。
+        blobs = self.client.list_blobs(
+            bucket_or_name=bucket_name, prefix=prefix)
+        return sorted(blob.name for blob in blobs)
 
-    def upload_text(
-        self,
-        bucket: str,
-        name: str,
-        text: str,
-        content_type: str = MD_CONTENT_TYPE,
-    ) -> None:
-        """Markdown文字列を UTF-8 で GCS へ保存する。"""
-        # 1) 出力先オブジェクトを特定する。
-        logger.debug("Uploading markdown: gs://%s/%s content_type=%s chars=%d",
-                     bucket, name, content_type, len(text))
-        blob = self.client.bucket(bucket).blob(name)
+    def list_object_names_from_gs_uri(self, gs_uri_prefix: str) -> list[str]:
+        bucket, prefix = _parse_gs_uri(gs_uri_prefix)
+        return self.list_object_names(bucket_name=bucket, prefix=prefix)
 
-        # 2) content_type を付与して UTF-8 バイト列として保存する。
-        blob.upload_from_string(text.encode(
-            "utf-8"), content_type=content_type)
-        logger.debug("Upload completed: gs://%s/%s", bucket, name)
+    def download_json_documents_from_gs_uri_prefix(self, gs_uri_prefix: str) -> list[dict]:
+        # DocAI の出力プレフィックス配下から JSON のみを読み込む。
+        # メタファイル等が混在しても `.json` 以外は無視する。
+        bucket_name, prefix = _parse_gs_uri(gs_uri_prefix)
+        bucket = self.client.bucket(bucket_name)
+        object_names = self.list_object_names(bucket_name, prefix)
 
-    def list_object_names(self, bucket: str, prefix: str) -> list[str]:
-        """prefix 配下のオブジェクト名一覧を返す。"""
-        logger.debug("Listing objects: gs://%s/%s", bucket, prefix)
-        blobs = self.client.list_blobs(bucket_or_name=bucket, prefix=prefix)
-        return [blob.name for blob in blobs]
+        docs: list[dict] = []
+        for object_name in object_names:
+            if not object_name.endswith(".json"):
+                continue
+            blob = bucket.blob(object_name)
+            raw = blob.download_as_text(encoding="utf-8")
+            docs.append(json.loads(raw))
+        return docs
+
+    def write_markdown(self, bucket_name: str, object_name: str, markdown: str) -> str:
+        # 最終成果物を UTF-8 Markdown として保存し、追跡用に gs:// URI を返す。
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        blob.upload_from_string(
+            markdown, content_type="text/markdown; charset=utf-8")
+        return f"gs://{bucket_name}/{object_name}"
 
 
-class GeminiClient:
-    """Vertex AI Gemini クライアント（ローカルでもADCで実GCPへ）。"""
-
+class LLMService:
     def __init__(self, settings: Settings):
-        # 1) 実行先の project/location を初期化する。
-        vertexai.init(project=settings.gcp_project_id,
+        self.settings = settings
+        # Vertex AI 初期化はプロセス単位で一度行い、以後同モデルを再利用する。
+        vertexai_init(project=settings.gcp_project_id,
                       location=settings.gcp_location)
-        # 2) モデル名から Gemini クライアントを生成する。
-        self.model = GenerativeModel(settings.model_name)
-        logger.info("Gemini initialized: project=%s location=%s model=%s",
-                    settings.gcp_project_id, settings.gcp_location, settings.model_name)
+        self.model = GenerativeModel(settings.gemini_model_name)
 
-    def to_markdown(self, ocr_text: str) -> str:
-        """
-        OCRテキストを Gemini に渡して Markdown を生成する。
+    def polish_markdown(self, draft_markdown: str) -> str:
+        # OCR 生テキストの体裁のみを整える用途。
+        # 事実追加や要約を抑止するため、プロンプトで明示的に制約する。
+        prompt = f"""
+あなたはOCR後テキストをMarkdownへ整形する編集者です。
+以下のルールを守ってください。
 
-        入力:
-        - ocr_text: Document AI から抽出した生テキスト
+ルール:
+- 事実を追加しない
+- 原文を勝手に要約しない
+- 見出しらしい行は #, ##, ### に整形してよい
+- 箇条書きらしい行は Markdown リストに整形してよい
+- ページ番号、ヘッダ、フッタ、重複行、明らかなOCRノイズは除去してよい
+- 段落は自然な単位でまとめる
+- 文章順は原則維持
+- 表は完全再構築できない場合、無理に表にせずテキストとして崩さず残す
+- 日本語の不自然な改行は修正してよい
+- 出力はMarkdown本文のみ
+- コードフェンスは使わない
 
-        出力:
-        - 生成された Markdown 文字列（空の場合は ""）
-        """
-        # 1) 指示文 + OCR本文でプロンプトを構成する。
-        logger.debug("Gemini request start: input_chars=%d", len(ocr_text))
-        prompt = [
-            Part.from_text(SYS_INSTRUCTION),
-            Part.from_text("\n\n--- OCR TEXT ---\n"),
-            Part.from_text(ocr_text),
-        ]
-        # 2) 同期呼び出しで Markdown を取得する。
-        started_at = time.perf_counter()
-        resp = self.model.generate_content(prompt, stream=False)
-        # 3) 取得した本文を返す（空は空文字へ正規化）。
-        output = resp.text or ""
-        logger.debug("Gemini request done: output_chars=%d elapsed_ms=%d",
-                     len(output), int((time.perf_counter() - started_at) * 1000))
-        return output
+入力テキスト:
+{draft_markdown[: self.settings.gemini_max_input_chars]}
+"""
+        response = self.model.generate_content(prompt)
+        text = getattr(response, "text", "") or ""
+        return text.strip()
 
 
 @dataclass(frozen=True)
 class Services:
-    """entrypoint が利用する外部サービスの束。"""
-
-    storage: StorageClient
-    gemini: GeminiClient
+    # エントリーポイント側が依存を1つの束として受け取れるようにする。
+    storage_service: StorageService
+    llm_service: LLMService
 
 
 def build_services(settings: Settings) -> Services:
-    """設定をもとにサービス群を組み立てるファクトリ。"""
-    # entrypoint から外部サービスを一括参照できるように束ねて返す。
+    # 外部サービス依存の生成を1箇所に集約し、テスト時の差し替えを容易にする。
     return Services(
-        storage=StorageClient(settings),
-        gemini=GeminiClient(settings),
+        storage_service=StorageService(settings),
+        llm_service=LLMService(settings),
     )

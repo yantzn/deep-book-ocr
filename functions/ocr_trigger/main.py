@@ -1,11 +1,3 @@
-"""
-責務:
-- GCS finalize イベントから入力PDFを特定
-- PDF以外を除外
-- Document AI バッチOCRを起動（submit だけ行い、完了待ちはしない）
-- Cloud Logging（GCP時）を初期化
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -15,32 +7,26 @@ import os
 import sys
 import time
 import uuid
-from typing import Any
 
 import functions_framework
-from cloudevents.http import CloudEvent
+from flask import Request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-config_module = importlib.import_module("ocr_trigger.config")
-gcp_services_module = importlib.import_module("ocr_trigger.gcp_services")
+config_module = importlib.import_module("md_generator.config")
+gcp_services_module = importlib.import_module("md_generator.gcp_services")
+job_store_module = importlib.import_module("md_generator.job_store")
+markdown_logic_module = importlib.import_module("md_generator.markdown_logic")
 
 get_settings = config_module.get_settings
 build_services = gcp_services_module.build_services
+FirestoreJobStore = job_store_module.FirestoreJobStore
+build_markdown_from_documentai_jsons = markdown_logic_module.build_markdown_from_documentai_jsons
 
 logger = logging.getLogger(__name__)
 
-# cold start 判定
-_COLD_START = True
-
 
 def _setup_logging() -> None:
-    """
-    ローカル:
-      - 標準loggingのみ
-    GCP:
-      - google-cloud-logging が入っていれば Cloud Logging に統合
-    """
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(level=level)
@@ -61,143 +47,143 @@ def _setup_logging() -> None:
             "Cloud Logging setup failed; fallback to std logging: %s", e)
 
 
-def _is_pdf_object(name: str, content_type: str | None) -> bool:
-    if name.lower().endswith(".pdf"):
-        return True
-    if content_type and content_type.lower() == "application/pdf":
-        return True
-    return False
-
-
-def _safe_event_context(event: CloudEvent) -> dict[str, Any]:
-    data = event.data or {}
-    return {
-        "id": getattr(event, "get", lambda *_: None)("id"),
-        "source": getattr(event, "get", lambda *_: None)("source"),
-        "type": getattr(event, "get", lambda *_: None)("type"),
-        "subject": getattr(event, "get", lambda *_: None)("subject"),
-        "bucket": data.get("bucket"),
-        "name": data.get("name"),
-        "contentType": data.get("contentType"),
-        "metageneration": data.get("metageneration"),
-        "generation": data.get("generation"),
-        "timeCreated": data.get("timeCreated"),
-        "updated": data.get("updated"),
-    }
-
-
-@functions_framework.cloud_event
-def start_ocr(event: CloudEvent) -> tuple[str, int]:
-    global _COLD_START
-
+@functions_framework.http
+def generate_markdown(request: Request):
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
-    cold_start = _COLD_START
-    _COLD_START = False
 
     _setup_logging()
 
-    # ロギング初期化後に設定とサービスを構築する
     settings = get_settings()
     services = build_services(settings)
-    docai_service = services.docai_service
-    gcs_service = services.gcs_service
+    storage_service = services.storage_service
+    llm_service = services.llm_service
+    job_store = FirestoreJobStore(settings)
 
     logger.info(
-        "[%s] start_ocr entered cold_start=%s pid=%s service=%s revision=%s",
+        "[%s] generate_markdown entered service=%s revision=%s",
         request_id,
-        cold_start,
-        os.getpid(),
         os.getenv("K_SERVICE", ""),
         os.getenv("K_REVISION", ""),
     )
 
     try:
-        data = event.data or {}
-        bucket = (data.get("bucket") or "").strip()
-        name = (data.get("name") or "").strip()
-        content_type = data.get("contentType")
+        body = request.get_json(silent=True) or {}
+        job_id = str(body.get("job_id") or "").strip()
 
-        logger.info(
-            "[%s] event_summary=%s",
-            request_id,
-            json.dumps(_safe_event_context(event),
-                       ensure_ascii=False, default=str),
+        logger.info("[%s] request_body=%s", request_id,
+                    json.dumps(body, ensure_ascii=False, default=str))
+
+        if not job_id:
+            logger.warning("[%s] missing job_id", request_id)
+            return ("job_id が必要です", 400)
+
+        job = job_store.get_job(job_id)
+        logger.info("[%s] loaded_job=%s", request_id, json.dumps(
+            job, ensure_ascii=False, default=str))
+
+        temp_output_prefix = str(job["temp_output_prefix"])
+        input_name = str(job["input_name"])
+        input_generation = str(job["input_generation"])
+
+        job_store.update_fields(
+            job_id,
+            {
+                "status": "MD_RUNNING",
+                "md_started_at": job_store.now_iso(),
+            },
         )
 
+        list_started = time.perf_counter()
+        object_names = storage_service.list_object_names_from_gs_uri(
+            temp_output_prefix)
         logger.info(
-            "[%s] settings_summary project=%s processor_location=%s processor_id=%s "
-            "temp_bucket=%s submit_timeout_sec=%s is_gcp=%s",
+            "[%s] listed_objects count=%s elapsed_ms=%s prefix=%s",
             request_id,
-            settings.gcp_project_id,
-            settings.processor_location,
-            settings.processor_id,
-            settings.temp_bucket,
-            settings.docai_submit_timeout_sec,
-            settings.is_gcp,
+            len(object_names),
+            int((time.perf_counter() - list_started) * 1000),
+            temp_output_prefix,
         )
 
-        if not bucket or not name:
-            logger.warning(
-                "[%s] missing bucket/name in event payload=%s", request_id, data)
-            return ("不正なリクエスト: CloudEventのデータが不足しています", 400)
+        if not object_names:
+            raise RuntimeError(
+                f"No OCR JSON objects found under prefix: {temp_output_prefix}")
 
-        if not _is_pdf_object(name, content_type):
-            logger.info(
-                "[%s] ignored non-pdf object bucket=%s name=%s contentType=%s",
-                request_id,
-                bucket,
-                name,
-                content_type,
-            )
-            return ("PDF以外のためスキップしました。", 200)
-
-        probe_started = time.perf_counter()
-        blob_meta = gcs_service.get_blob_metadata(bucket, name)
+        download_started = time.perf_counter()
+        json_docs = storage_service.download_json_documents_from_gs_uri_prefix(
+            temp_output_prefix)
         logger.info(
-            "[%s] gcs_probe result=%s elapsed_ms=%s",
+            "[%s] downloaded_json_docs count=%s elapsed_ms=%s",
             request_id,
-            json.dumps(blob_meta, ensure_ascii=False, default=str),
-            int((time.perf_counter() - probe_started) * 1000),
+            len(json_docs),
+            int((time.perf_counter() - download_started) * 1000),
         )
 
-        if not blob_meta.get("exists", False):
-            logger.warning(
-                "[%s] input blob not found bucket=%s name=%s", request_id, bucket, name)
-            return ("入力PDFが見つかりませんでした", 404)
-
-        submit_started = time.perf_counter()
-        logger.info("[%s] about_to_submit_docai input=gs://%s/%s",
-                    request_id, bucket, name)
-
-        operation_name, output_uri = docai_service.start_ocr_batch_job(
-            bucket,
-            name,
-            request_id=request_id,
+        markdown_started = time.perf_counter()
+        markdown, stats = build_markdown_from_documentai_jsons(
+            json_docs=json_docs,
+            llm_service=llm_service,
+            enable_gemini_polish=settings.enable_gemini_polish,
+        )
+        logger.info(
+            "[%s] markdown_built chars=%s stats=%s elapsed_ms=%s",
+            request_id,
+            len(markdown),
+            json.dumps(stats, ensure_ascii=False, default=str),
+            int((time.perf_counter() - markdown_started) * 1000),
         )
 
+        object_name = f"{input_name}/{input_generation}.md"
+        upload_started = time.perf_counter()
+        output_uri = storage_service.write_markdown(
+            bucket_name=settings.output_bucket,
+            object_name=object_name,
+            markdown=markdown,
+        )
         logger.info(
-            "[%s] docai_submit_succeeded operation=%s output_uri=%s elapsed_ms=%s",
+            "[%s] markdown_uploaded output_uri=%s elapsed_ms=%s",
             request_id,
-            operation_name,
             output_uri,
-            int((time.perf_counter() - submit_started) * 1000),
+            int((time.perf_counter() - upload_started) * 1000),
         )
-        return ("OCR処理を開始しました。", 200)
 
-    except TimeoutError as e:
-        logger.exception(
-            "[%s] document_ai_submit_timed_out: %s", request_id, e)
-        return ("Document AI へのリクエストがタイムアウトしました", 504)
+        job_store.update_fields(
+            job_id,
+            {
+                "status": "MD_SUCCEEDED",
+                "output_markdown_uri": output_uri,
+                "md_stats": stats,
+                "md_completed_at": job_store.now_iso(),
+            },
+        )
+
+        return ("OK", 200)
 
     except Exception as e:
         logger.exception(
-            "[%s] unexpected_error_while_submitting_ocr_batch: %s", request_id, e)
-        return ("サーバー内部エラー", 500)
+            "[%s] Unexpected error while generating markdown: %s", request_id, e)
+
+        try:
+            body = request.get_json(silent=True) or {}
+            job_id = str(body.get("job_id") or "").strip()
+            if job_id:
+                job_store.update_fields(
+                    job_id,
+                    {
+                        "status": "MD_FAILED",
+                        "last_error": repr(e),
+                        "md_failed_at": job_store.now_iso(),
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "[%s] Failed to update MD_FAILED status", request_id)
+
+        return ("Internal Server Error", 500)
 
     finally:
         logger.info(
-            "[%s] start_ocr finished total_elapsed_ms=%s",
+            "[%s] generate_markdown finished total_elapsed_ms=%s",
             request_id,
             int((time.perf_counter() - started_at) * 1000),
         )
