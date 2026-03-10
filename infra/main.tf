@@ -213,8 +213,9 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   location = var.region
 
   build_config {
-    runtime     = "python310"
-    entry_point = "start_ocr"
+    runtime         = "python310"
+    entry_point     = "start_ocr"
+    service_account = var.github_actions_service_account_email
 
     source {
       storage_source {
@@ -290,8 +291,9 @@ resource "google_cloudfunctions2_function" "md_generator" {
   location = var.region
 
   build_config {
-    runtime     = "python310"
-    entry_point = "generate_markdown"
+    runtime         = "python310"
+    entry_point     = "generate_markdown"
+    service_account = var.github_actions_service_account_email
 
     source {
       storage_source {
