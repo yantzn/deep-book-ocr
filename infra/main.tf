@@ -195,6 +195,16 @@ resource "google_cloudfunctions2_function_iam_member" "workflow_md_generator_inv
   member         = local.workflow_sa_member
 }
 
+# Workflows API 有効化後、初回作成ではサービスエージェントが未生成のままになることがあるため
+# 先に service identity を明示的に作成してから Workflow 本体を作る。
+resource "google_project_service_identity" "workflows_service_agent" {
+  provider = google
+  project  = var.project_id
+  service  = "workflows.googleapis.com"
+
+  depends_on = [google_project_service.required]
+}
+
 #
 # Workflows definition
 #
@@ -213,6 +223,7 @@ resource "google_workflows_workflow" "docai_monitor" {
 
   depends_on = [
     google_project_service.required,
+    google_project_service_identity.workflows_service_agent,
     google_cloudfunctions2_function.md_generator
   ]
 }
