@@ -114,6 +114,13 @@ resource "google_project_iam_member" "github_sa_artifactregistry_admin" {
   member  = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+resource "google_project_iam_member" "github_sa_documentai_editor" {
+  # infra で google_document_ai_processor を作成/参照/更新するために必要。
+  project = var.project_id
+  role    = "roles/documentai.editor"
+  member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
 resource "google_project_iam_member" "github_sa_serviceusage_consumer" {
   project = var.project_id
   # GitHub Actions から API 呼び出し時の quota 消費に必要。
