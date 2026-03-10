@@ -80,3 +80,13 @@ class DocumentAIService:
 
         # 非同期LROの operation name を返して、後続が状態監視できるようにする。
         return operation.operation.name
+
+    def start_ocr_batch_job(self, bucket: str, name: str) -> tuple[str, str]:
+        # trigger 側のユースケース向けに、output_prefix 算出と submit をまとめる。
+        output_prefix = f"{self.settings.temp_bucket_uri()}{name}_json/"
+        operation_name = self.submit_batch_process(
+            bucket=bucket,
+            name=name,
+            output_prefix=output_prefix,
+        )
+        return operation_name, output_prefix
