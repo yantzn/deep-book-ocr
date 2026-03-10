@@ -306,7 +306,6 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
 
   lifecycle {
     ignore_changes = [
-      build_config[0].source[0].storage_source[0].object,
       build_config[0].source[0].storage_source[0].generation,
     ]
   }
@@ -365,7 +364,6 @@ resource "google_cloudfunctions2_function" "md_generator" {
     replace_triggered_by = [terraform_data.md_generator_http_migration]
 
     ignore_changes = [
-      build_config[0].source[0].storage_source[0].object,
       build_config[0].source[0].storage_source[0].generation,
     ]
   }
