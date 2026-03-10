@@ -1,0 +1,100 @@
+main:
+  params: [input]
+  steps:
+    - init:
+        assign:
+          - project_id: ${"${project_id}"}
+          - job_id: ${input.job_id}
+          - operation_name: ${input.operation_name}
+          - jobs_collection: ${"${jobs_collection}"}
+          - md_generator_url: ${"${md_generator_url}"}
+          - md_generator_audience: ${"${md_generator_audience}"}
+
+    - markRunning:
+        call: googleapis.firestore.v1.projects.databases.documents.patch
+        args:
+          name: ${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+          updateMask:
+            fieldPaths: ["status"]
+          body:
+            fields:
+              status:
+                stringValue: "DOC_AI_RUNNING"
+
+    - getOperation:
+        call: googleapis.documentai.v1.projects.locations.operations.get
+        args:
+          name: ${operation_name}
+        result: operation
+
+    - checkDone:
+        switch:
+          - condition: ${operation.done == false}
+            next: waitStep
+          - condition: ${map.get(operation, "error") != null}
+            next: markDocAiFailed
+        next: markDocAiSucceeded
+
+    - waitStep:
+        call: sys.sleep
+        args:
+          seconds: 30
+        next: getOperation
+
+    - markDocAiFailed:
+        call: googleapis.firestore.v1.projects.databases.documents.patch
+        args:
+          name: ${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+          updateMask:
+            fieldPaths: ["status", "last_error"]
+          body:
+            fields:
+              status:
+                stringValue: "DOC_AI_FAILED"
+              last_error:
+                stringValue: ${json.encode_to_string(operation.error)}
+        next: finishFailed
+
+    - markDocAiSucceeded:
+        call: googleapis.firestore.v1.projects.databases.documents.patch
+        args:
+          name: ${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+          updateMask:
+            fieldPaths: ["status"]
+          body:
+            fields:
+              status:
+                stringValue: "DOC_AI_SUCCEEDED"
+        next: triggerMdGenerator
+
+    - triggerMdGenerator:
+        call: http.post
+        args:
+          url: ${md_generator_url}
+          auth:
+            type: OIDC
+            audience: ${md_generator_audience}
+          headers:
+            Content-Type: "application/json"
+          body:
+            job_id: ${job_id}
+        result: md_response
+        next: markMdTriggered
+
+    - markMdTriggered:
+        call: googleapis.firestore.v1.projects.databases.documents.patch
+        args:
+          name: ${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+          updateMask:
+            fieldPaths: ["status"]
+          body:
+            fields:
+              status:
+                stringValue: "MD_TRIGGERED"
+        next: finishOk
+
+    - finishFailed:
+        return: "DOC_AI_FAILED"
+
+    - finishOk:
+        return: "OK"
