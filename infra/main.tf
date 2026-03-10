@@ -93,27 +93,43 @@ resource "google_document_ai_processor" "ocr" {
   depends_on = [google_project_service.required]
 }
 
+# Cloud Functions 初回作成時に参照される最小 ZIP を Terraform 側で生成する。
+# 実運用では CI/CD が同じ object 名へ本番コード ZIP を上書きする。
+data "archive_file" "ocr_trigger_placeholder_zip" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/ocr-trigger-placeholder.zip"
+
+  source {
+    filename = "main.py"
+    content  = "def start_ocr(event):\n    return (\"placeholder\", 200)\n"
+  }
+}
+
+data "archive_file" "md_generator_placeholder_zip" {
+  type        = "zip"
+  output_path = "${path.module}/.terraform/md-generator-placeholder.zip"
+
+  source {
+    filename = "main.py"
+    content  = "def generate_markdown(request):\n    return (\"placeholder\", 200)\n"
+  }
+}
+
 #
 # Source objects (dummy placeholders; actual code replaced by CI/CD)
 #
 resource "google_storage_bucket_object" "ocr_trigger_source" {
-  name    = local.ocr_trigger_source_object
-  bucket  = google_storage_bucket.buckets["source"].name
-  content = "placeholder zip content for ocr-trigger"
-
-  lifecycle {
-    ignore_changes = [content]
-  }
+  name         = local.ocr_trigger_source_object
+  bucket       = google_storage_bucket.buckets["source"].name
+  source       = data.archive_file.ocr_trigger_placeholder_zip.output_path
+  content_type = "application/zip"
 }
 
 resource "google_storage_bucket_object" "md_generator_source" {
-  name    = local.md_generator_source_object
-  bucket  = google_storage_bucket.buckets["source"].name
-  content = "placeholder zip content for md-generator"
-
-  lifecycle {
-    ignore_changes = [content]
-  }
+  name         = local.md_generator_source_object
+  bucket       = google_storage_bucket.buckets["source"].name
+  source       = data.archive_file.md_generator_placeholder_zip.output_path
+  content_type = "application/zip"
 }
 
 #
