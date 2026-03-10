@@ -202,7 +202,7 @@ resource "google_workflows_workflow" "docai_monitor" {
 # md-generator を過去構成（イベント駆動）から現行構成（HTTP専用）へ移行するための
 # one-time 再作成トリガー。input 文字列を変更しない限り再実行時の再作成は発生しない。
 resource "terraform_data" "md_generator_http_migration" {
-  input = "v1"
+  input = "v2"
 }
 
 #
