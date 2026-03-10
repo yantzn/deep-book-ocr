@@ -6,6 +6,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# ローカル実行時に参照する既定の .env ファイル。
+# Cloud Functions 本番では環境変数が優先される。
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
+        # デプロイ環境で追加される未使用キーがあっても失敗しないようにする。
         extra="ignore",
     )
 
@@ -47,6 +50,7 @@ class Settings(BaseSettings):
 
     @property
     def is_gcp(self) -> bool:
+        # ログ初期化や実行モード分岐で使う環境判定フラグ。
         return self.app_env.lower() == "gcp"
 
     def processor_id_normalized(self) -> str:
@@ -54,6 +58,7 @@ class Settings(BaseSettings):
         Document AI の processor_id を正規化。
         - projects/.../locations/.../processors/... を渡されたら ... の部分だけにする
         """
+        # 入力揺れ（idのみ / 完全リソース名）を吸収して後段処理を単純化する。
         v = self.processor_id.strip()
         if "/processors/" in v:
             return v.split("/processors/")[-1].strip("/")
@@ -61,6 +66,7 @@ class Settings(BaseSettings):
 
     def temp_bucket_uri(self) -> str:
         """TEMP_BUCKET を gs://<bucket>/ 形式に揃える（末尾 / 付与）。"""
+        # bucket 名のみ渡された場合も URI へ正規化し、呼び出し側の分岐をなくす。
         t = self.temp_bucket.strip()
         if t.startswith("gs://"):
             return t.rstrip("/") + "/"
@@ -69,4 +75,5 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    # 設定の再パースを避けるため、プロセス内で1回だけ生成して再利用する。
     return Settings()

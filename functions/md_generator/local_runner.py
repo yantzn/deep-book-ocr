@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import sys
 
+from flask import Flask, request
+
 
 def _ensure_venv_python() -> None:
     base_dir = os.path.dirname(__file__)
@@ -21,7 +23,7 @@ def _ensure_venv_python() -> None:
 
 def _bootstrap_env() -> None:
     try:
-        from dotenv import load_dotenv
+        from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]
 
         load_dotenv()
     except ModuleNotFoundError:
@@ -31,8 +33,7 @@ def _bootstrap_env() -> None:
         "APP_ENV",
         "GCP_PROJECT_ID",
         "OUTPUT_BUCKET",
-        "LOCAL_INPUT_BUCKET",
-        "LOCAL_INPUT_OBJECT",
+        "LOCAL_JOB_ID",
     ]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
@@ -45,30 +46,29 @@ def _bootstrap_env() -> None:
 _ensure_venv_python()
 _bootstrap_env()
 
-from cloudevents.http import CloudEvent  # noqa: E402
 from main import generate_markdown  # noqa: E402
 
 
+app = Flask(__name__)
+
+
 def run_local():
-    bucket = os.environ["LOCAL_INPUT_BUCKET"].strip()
-    name = os.environ["LOCAL_INPUT_OBJECT"].strip()
+    job_id = os.environ["LOCAL_JOB_ID"].strip()
+    if not job_id:
+        raise RuntimeError("LOCAL_JOB_ID を指定してください。")
 
-    if ":" in name or "\\" in name or name.startswith("/"):
-        raise RuntimeError(
-            "LOCAL_INPUT_OBJECT にはローカルファイルパスではなく、"
-            "GCS上のオブジェクト名（例: processed/sample_pdf/0.json）を指定してください。"
-        )
-
-    event = CloudEvent(
-        attributes={
-            "type": "google.cloud.storage.object.v1.finalized",
-            "source": "//storage.googleapis.com/projects/_/buckets/example",
-            "id": "local-test-id",
-            "specversion": "1.0",
-        },
-        data={"bucket": bucket, "name": name},
+    trace_header = os.environ.get(
+        "LOCAL_TRACE_CONTEXT",
+        "local-trace-id/0;o=1",
     )
-    return generate_markdown(event)
+
+    with app.test_request_context(
+        path="/",
+        method="POST",
+        json={"job_id": job_id},
+        headers={"X-Cloud-Trace-Context": trace_header},
+    ):
+        return generate_markdown(request)
 
 
 if __name__ == "__main__":

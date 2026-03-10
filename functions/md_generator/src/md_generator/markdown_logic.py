@@ -1,116 +1,354 @@
 from __future__ import annotations
 
-"""
-Markdown関連の補助ロジック。
-
-I/Oや外部APIに依存しない処理を集約し、テスト容易性を高める。
-"""
-
-from dataclasses import dataclass
-from pathlib import PurePosixPath
+import math
 import re
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any
 
 
-@dataclass(frozen=True)
-class PageChunk:
-    """半開区間 [start_page, end_page) のページ範囲を表す。"""
-
-    start_page: int  # 0始まり
-    end_page: int  # 終端は含まない
-
-
-def build_page_chunks(total_pages: int, chunk_size: int) -> List[PageChunk]:
-    """総ページ数を、段階的なモデル処理用のチャンク範囲に分割する。"""
-    if total_pages <= 0:
-        return []
-    if chunk_size <= 0:
-        chunk_size = 10
-
-    chunks: List[PageChunk] = []
-    for i in range(0, total_pages, chunk_size):
-        chunks.append(
-            PageChunk(start_page=i, end_page=min(i + chunk_size, total_pages)))
-    return chunks
+@dataclass
+class TextBlock:
+    # Document AI レイアウト情報を、後段で扱いやすい中間表現へ正規化した単位。
+    # page と bbox を持たせることで、読み順復元やヘッダ/フッタ除去に利用する。
+    page_number: int
+    text: str
+    y_top: float
+    x_left: float
+    y_bottom: float
+    x_right: float
+    block_type: str
 
 
-def extract_text_from_page_range(doc_ai_json: Dict[str, Any], start_page: int, end_page: int) -> str:
+def _anchor_text(full_text: str, text_anchor: dict[str, Any]) -> str:
+    # textAnchor の start/end インデックス群から、元テキストを連結復元する。
+    # Document AI はページ要素ごとの部分範囲だけを返すため、この処理が必要。
+    chunks: list[str] = []
+    for seg in text_anchor.get("textSegments", []):
+        start_index = int(seg.get("startIndex", 0) or 0)
+        end_index = int(seg.get("endIndex", 0) or 0)
+        chunks.append(full_text[start_index:end_index])
+    return "".join(chunks)
+
+
+def _get_vertices(layout: dict[str, Any]) -> list[dict[str, float]]:
+    # normalizedVertices / vertices どちらの形式でも扱えるよう統一。
+    poly = layout.get("boundingPoly", {})
+    vertices = poly.get("normalizedVertices") or poly.get("vertices") or []
+    normalized: list[dict[str, float]] = []
+
+    for v in vertices:
+        x = float(v.get("x", 0.0) or 0.0)
+        y = float(v.get("y", 0.0) or 0.0)
+        normalized.append({"x": x, "y": y})
+
+    if not normalized:
+        # bbox 欠損でも後段処理を継続できるよう、原点のダミー4点を補完する。
+        normalized = [{"x": 0.0, "y": 0.0}] * 4
+
+    return normalized
+
+
+def _bbox_from_layout(layout: dict[str, Any]) -> tuple[float, float, float, float]:
+    # 頂点列から [top, left, bottom, right] を算出して比較しやすい形にする。
+    vs = _get_vertices(layout)
+    xs = [v["x"] for v in vs]
+    ys = [v["y"] for v in vs]
+    return min(ys), min(xs), max(ys), max(xs)
+
+
+def _clean_inline_text(text: str) -> str:
+    # OCR 由来の不可視文字・余分空白を正規化して比較や分類の精度を上げる。
+    text = text.replace("\u00ad", "")
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _looks_like_page_number(text: str) -> bool:
+    # 単独数字や "P.12" など、ページ番号らしい短文を判定する。
+    t = text.strip()
+    if not t:
+        return False
+    if re.fullmatch(r"-?\s*\d+\s*-?", t):
+        return True
+    if re.fullmatch(r"[Pp]\.?\s*\d+", t):
+        return True
+    return False
+
+
+def _is_probable_header_footer(text: str, y_top: float, y_bottom: float) -> bool:
+    # 上端/下端にある短文やページ番号をヘッダ/フッタ候補として扱う。
+    t = text.strip()
+    if not t:
+        return True
+    if len(t) <= 3 and _looks_like_page_number(t):
+        return True
+    if y_top < 0.05:
+        return True
+    if y_bottom > 0.95:
+        return True
+    return False
+
+
+def _is_heading_candidate(text: str) -> bool:
+    # 見出し化の候補判定（短文・章節番号・節番号形式など）。
+    # 誤検出を避けるため長文や文末句点付きは除外する。
+    t = text.strip()
+    if not t:
+        return False
+    if len(t) > 80:
+        return False
+    if t.endswith("。"):
+        return False
+    if re.fullmatch(r"[第].{1,12}[章節部]", t):
+        return True
+    if re.fullmatch(r"\d+(\.\d+)*\s+.+", t):
+        return True
+    if len(t) <= 30:
+        return True
+    return False
+
+
+def _normalize_line_breaks(text: str) -> str:
+    # 改行コード揺れと行頭/行末の空白を統一。
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    return text
+
+
+def _merge_wrapped_lines(text: str) -> str:
     """
-    Document AI のJSON構造を使って、ページ範囲 [start_page, end_page) のテキストを抽出する。
-
-    前提となるキー:
-    - doc_ai_json["text"]
-    - doc_ai_json["pages"][i]["layout"]["textAnchor"]["textSegments"]
+    OCR由来の不自然な改行をある程度つなぐ。
     """
-    full_text = doc_ai_json.get("text", "") or ""
-    pages = doc_ai_json.get("pages", []) or []
+    lines = [ln.strip() for ln in _normalize_line_breaks(text).split("\n")]
+    merged: list[str] = []
 
-    start_page = max(0, start_page)
-    end_page = min(len(pages), end_page)
+    for line in lines:
+        if not line:
+            merged.append("")
+            continue
 
-    parts: List[str] = []
-    for i in range(start_page, end_page):
-        page = pages[i] or {}
-        segments = (
-            page.get("layout", {})
-            .get("textAnchor", {})
-            .get("textSegments", [])
-        ) or []
+        if not merged:
+            merged.append(line)
+            continue
 
-        for seg in segments:
-            s = int(seg.get("startIndex", 0) or 0)
-            e = int(seg.get("endIndex", 0) or 0)
-            if e > s:
-                parts.append(full_text[s:e])
+        prev = merged[-1]
+        if not prev:
+            merged.append(line)
+            continue
 
-    return "".join(parts)
+        should_join = (
+            # 文が未完了で、次行がリスト/見出し開始でない場合は連結する。
+            not prev.endswith(("。", "！", "？", ".", "!", "?", ":", "："))
+            and not line.startswith(("-", "*", "・", "■", "□", "◯", "○"))
+            and not re.match(r"^\d+(\.\d+)*\s+", line)
+        )
+
+        if should_join:
+            merged[-1] = f"{prev}{line}"
+        else:
+            merged.append(line)
+
+    out: list[str] = []
+    for line in merged:
+        if line == "":
+            if not out or out[-1] == "":
+                continue
+        out.append(line)
+
+    return "\n".join(out).strip()
 
 
-def derive_output_markdown_name(json_object_name: str) -> str:
+def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list[TextBlock]:
+    # 1ページ分の block/paragraph を TextBlock へ変換する。
+    # blocks がある場合はそちらを優先（より大きい意味単位を優先）。
+    full_text = doc.get("text", "")
+    page_number = int(page.get("pageNumber", 0) or 0)
+    blocks: list[TextBlock] = []
+
+    page_blocks = page.get("blocks", [])
+    page_paragraphs = page.get("paragraphs", [])
+
+    if page_blocks:
+        for blk in page_blocks:
+            layout = blk.get("layout", {})
+            text = _clean_inline_text(_anchor_text(
+                full_text, layout.get("textAnchor", {})))
+            if not text:
+                continue
+            y_top, x_left, y_bottom, x_right = _bbox_from_layout(layout)
+            blocks.append(
+                TextBlock(
+                    page_number=page_number,
+                    text=text,
+                    y_top=y_top,
+                    x_left=x_left,
+                    y_bottom=y_bottom,
+                    x_right=x_right,
+                    block_type="block",
+                )
+            )
+        return blocks
+
+    for para in page_paragraphs:
+        layout = para.get("layout", {})
+        text = _clean_inline_text(_anchor_text(
+            full_text, layout.get("textAnchor", {})))
+        if not text:
+            continue
+        y_top, x_left, y_bottom, x_right = _bbox_from_layout(layout)
+        blocks.append(
+            TextBlock(
+                page_number=page_number,
+                text=text,
+                y_top=y_top,
+                x_left=x_left,
+                y_bottom=y_bottom,
+                x_right=x_right,
+                block_type="paragraph",
+            )
+        )
+    return blocks
+
+
+def _sort_blocks_reading_order(blocks: list[TextBlock]) -> list[TextBlock]:
     """
-    JSONオブジェクトのパスから、出力Markdownファイル名を導出する。
-
-    例:
-    - processed/sample_pdf/0.json -> sample.md
+    簡易な読み順:
+    - 上から下
+    - 近い行では左から右
     """
-    p = PurePosixPath(json_object_name)
-    parts = p.parts
-
-    for part in parts:
-        if part.endswith(".pdf_json"):
-            return f"{part[:-9]}.md"
-        if part.endswith("_pdf"):
-            return f"{part[:-4]}.md"
-
-    stem = p.stem
-    stem = re.sub(r"-\d+$", "", stem)
-    if not stem:
-        stem = "output"
-    return f"{stem}.md"
-
-
-def derive_json_group_prefix(json_object_name: str) -> str:
-    """同一OCR結果グループのJSONを列挙するためのprefixを返す。"""
-    p = PurePosixPath(json_object_name)
-    parent = p.parent.as_posix()
-    if parent in ("", "."):
-        return ""
-    return f"{parent}/"
-
-
-def _extract_trailing_number(name: str) -> int:
-    stem = PurePosixPath(name).stem
-    m = re.search(r"(\d+)$", stem)
-    return int(m.group(1)) if m else -1
-
-
-def sort_json_object_names(names: List[str]) -> List[str]:
-    """JSONオブジェクト名をページ順に近い形で安定ソートする。"""
     return sorted(
-        names,
-        key=lambda n: (
-            PurePosixPath(n).parent.as_posix(),
-            _extract_trailing_number(n),
-            PurePosixPath(n).name,
+        blocks,
+        key=lambda b: (
+            b.page_number,
+            round(b.y_top, 3),
+            round(b.x_left, 3),
         ),
     )
+
+
+def _dedupe_repeated_header_footer(blocks: list[TextBlock]) -> list[TextBlock]:
+    """
+    複数ページで繰り返すヘッダ/フッタ候補を落とす。
+    """
+    freq: dict[str, int] = {}
+    # 短文の出現回数を数え、複数ページで反復する要素を候補化する。
+    for b in blocks:
+        t = b.text.strip()
+        if len(t) <= 80:
+            freq[t] = freq.get(t, 0) + 1
+
+    filtered: list[TextBlock] = []
+    for b in blocks:
+        t = b.text.strip()
+        repeated = freq.get(t, 0) >= 3
+        if repeated and _is_probable_header_footer(t, b.y_top, b.y_bottom):
+            continue
+        if _is_probable_header_footer(t, b.y_top, b.y_bottom):
+            continue
+        filtered.append(b)
+    return filtered
+
+
+def _blocks_to_markdown(blocks: list[TextBlock]) -> str:
+    # TextBlock を行単位テキストへ落とし込み、簡易ルールで見出し化する。
+    parts: list[str] = []
+    last_page = None
+
+    for b in blocks:
+        text = b.text.strip()
+        if not text:
+            continue
+
+        if last_page is not None and b.page_number != last_page:
+            parts.append("")
+        last_page = b.page_number
+
+        if _looks_like_page_number(text):
+            continue
+
+        if _is_heading_candidate(text):
+            # 章節表記や番号付き見出しはレベルを推定して Markdown 見出しへ。
+            if re.fullmatch(r"[第].{1,12}[章節部]", text):
+                parts.append(f"# {text}")
+            elif re.fullmatch(r"\d+(\.\d+)*\s+.+", text):
+                level = min(text.split(" ")[0].count(".") + 1, 3)
+                parts.append(f'{"#" * level} {text}')
+            elif len(text) <= 18:
+                parts.append(f"## {text}")
+            else:
+                parts.append(text)
+        else:
+            parts.append(text)
+
+    raw = "\n\n".join(p.strip() for p in parts if p and p.strip())
+    return _merge_wrapped_lines(raw)
+
+
+def _fallback_plain_text(json_docs: list[dict[str, Any]]) -> str:
+    # レイアウト抽出がうまくいかない場合の退避経路。
+    # document.text を連結して最低限の本文を確保する。
+    chunks: list[str] = []
+    for doc in json_docs:
+        txt = str(doc.get("text", "") or "").strip()
+        if txt:
+            chunks.append(txt)
+    return _merge_wrapped_lines("\n\n".join(chunks))
+
+
+def _collect_blocks(json_docs: list[dict[str, Any]]) -> list[TextBlock]:
+    # 複数JSON（複数ページ/複数分割）を横断して TextBlock を収集する。
+    blocks: list[TextBlock] = []
+    for doc in json_docs:
+        for page in doc.get("pages", []):
+            blocks.extend(_extract_blocks_from_page(doc, page))
+    return blocks
+
+
+def build_markdown_from_documentai_jsons(
+    json_docs: list[dict[str, Any]],
+    llm_service: Any,
+    enable_gemini_polish: bool = True,
+) -> tuple[str, dict[str, Any]]:
+    # 1) JSON -> block 収集
+    blocks = _collect_blocks(json_docs)
+    # 2) 読み順整列 + ヘッダ/フッタ除去
+    sorted_blocks = _sort_blocks_reading_order(blocks)
+    filtered_blocks = _dedupe_repeated_header_footer(sorted_blocks)
+
+    # 3) Markdown 下書き生成（失敗時は plain text フォールバック）
+    if filtered_blocks:
+        draft = _blocks_to_markdown(filtered_blocks)
+    else:
+        draft = _fallback_plain_text(json_docs)
+
+    draft = draft.strip()
+    if not draft:
+        raise RuntimeError("Draft markdown is empty after parsing OCR JSON")
+
+    polished = draft
+    used_gemini = False
+
+    # 4) 任意で Gemini による体裁調整を実施（空結果は採用しない）
+    if enable_gemini_polish:
+        polished_candidate = llm_service.polish_markdown(draft)
+        if polished_candidate.strip():
+            polished = polished_candidate.strip()
+            used_gemini = True
+
+    if not polished.endswith("\n"):
+        # 出力末尾を改行で統一し、後段処理や表示差分を安定化する。
+        polished += "\n"
+
+    # 5) 観測用メトリクスを返す（ログ/監視向け）
+    stats = {
+        "json_docs": len(json_docs),
+        "raw_blocks": len(blocks),
+        "filtered_blocks": len(filtered_blocks),
+        "used_gemini": used_gemini,
+        "draft_chars": len(draft),
+        "final_chars": len(polished),
+    }
+    return polished, stats

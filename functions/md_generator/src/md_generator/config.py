@@ -6,52 +6,56 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# src/md_generator/config.py -> functions/md_generator/.env を参照
+# `functions/md_generator/.env` をローカル実行時の既定設定ファイルとして読む。
+# Cloud Functions 実行時は環境変数が優先される。
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    """
-    md_generator 用設定。
-
-    重要:
-    - 文字化け対策として、JSON読み込みは UTF-8 固定で行う（entrypoint側で実施）
-    - ローカル/GCPでログ初期化を分岐（entrypoint側で実施）
-    """
-
+    # すべての設定は環境変数から読み込む。
+    # 未定義の余剰キーは無視して、デプロイ環境差分に強くする。
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
-        # pydantic warning回避（任意だが推奨）
-        protected_namespaces=("settings_",),
     )
 
-    # 実行環境の種別。Cloud Logging 初期化の分岐などで利用する（local | gcp）。
+    # 実行環境の種別（local / gcp）。ログ初期化や外部接続方針の分岐に使う。
     app_env: str = Field(default="local", alias="APP_ENV")
-    # アプリ全体のログ出力レベル。
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Vertex AI を呼び出す対象プロジェクトID。
-    gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
-    # Vertex AI のリージョン（例: us-central1）。
+    # GCP プロジェクト/リージョン。
+    # Storage, Firestore, Vertex AI などのクライアント初期化で共通利用する。
+    gcp_project_id: str = Field(
+        default="deep-book-ocr", alias="GCP_PROJECT_ID")
     gcp_location: str = Field(default="us-central1", alias="GCP_LOCATION")
 
-    # 生成した Markdown を保存する出力バケット名。
+    # OCR 中間JSONの参照先と、最終Markdownの出力先。
+    temp_bucket: str = Field(..., alias="TEMP_BUCKET")
     output_bucket: str = Field(..., alias="OUTPUT_BUCKET")
 
-    # 変換に使用する Gemini モデル名。
-    model_name: str = Field(default="gemini-2.5-flash", alias="MODEL_NAME")
-    # 1回の推論に渡すページ数（大きすぎると遅延/失敗率が上がる）。
-    chunk_size: int = Field(default=10, alias="CHUNK_SIZE")
+    # ジョブ状態（RUNNING/SUCCEEDED/FAILED）を保存する Firestore コレクション名。
+    firestore_jobs_collection: str = Field(
+        default="ocr_jobs", alias="FIRESTORE_JOBS_COLLECTION")
+
+    # Markdown整形に使う Gemini 設定。
+    # 大きすぎる入力で失敗しないよう、送信文字数上限を持つ。
+    gemini_model_name: str = Field(
+        default="gemini-1.5-pro", alias="GEMINI_MODEL_NAME")
+    enable_gemini_polish: bool = Field(
+        default=True, alias="ENABLE_GEMINI_POLISH")
+    gemini_max_input_chars: int = Field(
+        default=120000, alias="GEMINI_MAX_INPUT_CHARS")
+
+    # アプリケーションログレベル。
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @property
     def is_gcp(self) -> bool:
-        # デプロイ先の GCP 環境で実行中なら True。
+        # Cloud Functions 上での実行かどうかの判定。
         return self.app_env.lower() == "gcp"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    # 設定読み込みをプロセス内で1回に抑え、毎回の環境変数パースを避ける。
+    # 設定オブジェクトをプロセス内で再利用して、毎回の再パースを避ける。
     return Settings()

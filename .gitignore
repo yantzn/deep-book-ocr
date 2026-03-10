@@ -7,6 +7,8 @@
 *.tfstate.*
 crash.log
 *.tfplan
+tfplan
+**/tfplan
 
 # provider lock ファイルは再現性のため追跡する
 !.terraform.lock.hcl
@@ -34,6 +36,11 @@ __pycache__/
 .venv/
 venv/
 env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # ========================
 # VSCode / DevContainer
@@ -41,6 +48,7 @@ env/
 
 .vscode/
 .history/
+.ipynb_checkpoints/
 
 # ========================
 # OS / Logs
@@ -49,6 +57,9 @@ env/
 .DS_Store
 Thumbs.db
 *.log
+
+# local cloud sdk state
+.gcloud/
 
 # ========================
 # Credentials
