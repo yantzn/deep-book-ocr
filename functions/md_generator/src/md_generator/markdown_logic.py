@@ -8,6 +8,8 @@ from typing import Any
 
 @dataclass
 class TextBlock:
+    # Document AI レイアウト情報を、後段で扱いやすい中間表現へ正規化した単位。
+    # page と bbox を持たせることで、読み順復元やヘッダ/フッタ除去に利用する。
     page_number: int
     text: str
     y_top: float
@@ -18,6 +20,8 @@ class TextBlock:
 
 
 def _anchor_text(full_text: str, text_anchor: dict[str, Any]) -> str:
+    # textAnchor の start/end インデックス群から、元テキストを連結復元する。
+    # Document AI はページ要素ごとの部分範囲だけを返すため、この処理が必要。
     chunks: list[str] = []
     for seg in text_anchor.get("textSegments", []):
         start_index = int(seg.get("startIndex", 0) or 0)
@@ -27,6 +31,7 @@ def _anchor_text(full_text: str, text_anchor: dict[str, Any]) -> str:
 
 
 def _get_vertices(layout: dict[str, Any]) -> list[dict[str, float]]:
+    # normalizedVertices / vertices どちらの形式でも扱えるよう統一。
     poly = layout.get("boundingPoly", {})
     vertices = poly.get("normalizedVertices") or poly.get("vertices") or []
     normalized: list[dict[str, float]] = []
@@ -37,12 +42,14 @@ def _get_vertices(layout: dict[str, Any]) -> list[dict[str, float]]:
         normalized.append({"x": x, "y": y})
 
     if not normalized:
+        # bbox 欠損でも後段処理を継続できるよう、原点のダミー4点を補完する。
         normalized = [{"x": 0.0, "y": 0.0}] * 4
 
     return normalized
 
 
 def _bbox_from_layout(layout: dict[str, Any]) -> tuple[float, float, float, float]:
+    # 頂点列から [top, left, bottom, right] を算出して比較しやすい形にする。
     vs = _get_vertices(layout)
     xs = [v["x"] for v in vs]
     ys = [v["y"] for v in vs]
@@ -50,6 +57,7 @@ def _bbox_from_layout(layout: dict[str, Any]) -> tuple[float, float, float, floa
 
 
 def _clean_inline_text(text: str) -> str:
+    # OCR 由来の不可視文字・余分空白を正規化して比較や分類の精度を上げる。
     text = text.replace("\u00ad", "")
     text = text.replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
@@ -58,6 +66,7 @@ def _clean_inline_text(text: str) -> str:
 
 
 def _looks_like_page_number(text: str) -> bool:
+    # 単独数字や "P.12" など、ページ番号らしい短文を判定する。
     t = text.strip()
     if not t:
         return False
@@ -69,6 +78,7 @@ def _looks_like_page_number(text: str) -> bool:
 
 
 def _is_probable_header_footer(text: str, y_top: float, y_bottom: float) -> bool:
+    # 上端/下端にある短文やページ番号をヘッダ/フッタ候補として扱う。
     t = text.strip()
     if not t:
         return True
@@ -82,6 +92,8 @@ def _is_probable_header_footer(text: str, y_top: float, y_bottom: float) -> bool
 
 
 def _is_heading_candidate(text: str) -> bool:
+    # 見出し化の候補判定（短文・章節番号・節番号形式など）。
+    # 誤検出を避けるため長文や文末句点付きは除外する。
     t = text.strip()
     if not t:
         return False
@@ -99,6 +111,7 @@ def _is_heading_candidate(text: str) -> bool:
 
 
 def _normalize_line_breaks(text: str) -> str:
+    # 改行コード揺れと行頭/行末の空白を統一。
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n[ \t]+", "\n", text)
@@ -127,6 +140,7 @@ def _merge_wrapped_lines(text: str) -> str:
             continue
 
         should_join = (
+            # 文が未完了で、次行がリスト/見出し開始でない場合は連結する。
             not prev.endswith(("。", "！", "？", ".", "!", "?", ":", "："))
             and not line.startswith(("-", "*", "・", "■", "□", "◯", "○"))
             and not re.match(r"^\d+(\.\d+)*\s+", line)
@@ -148,6 +162,8 @@ def _merge_wrapped_lines(text: str) -> str:
 
 
 def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list[TextBlock]:
+    # 1ページ分の block/paragraph を TextBlock へ変換する。
+    # blocks がある場合はそちらを優先（より大きい意味単位を優先）。
     full_text = doc.get("text", "")
     page_number = int(page.get("pageNumber", 0) or 0)
     blocks: list[TextBlock] = []
@@ -218,6 +234,7 @@ def _dedupe_repeated_header_footer(blocks: list[TextBlock]) -> list[TextBlock]:
     複数ページで繰り返すヘッダ/フッタ候補を落とす。
     """
     freq: dict[str, int] = {}
+    # 短文の出現回数を数え、複数ページで反復する要素を候補化する。
     for b in blocks:
         t = b.text.strip()
         if len(t) <= 80:
@@ -236,6 +253,7 @@ def _dedupe_repeated_header_footer(blocks: list[TextBlock]) -> list[TextBlock]:
 
 
 def _blocks_to_markdown(blocks: list[TextBlock]) -> str:
+    # TextBlock を行単位テキストへ落とし込み、簡易ルールで見出し化する。
     parts: list[str] = []
     last_page = None
 
@@ -252,6 +270,7 @@ def _blocks_to_markdown(blocks: list[TextBlock]) -> str:
             continue
 
         if _is_heading_candidate(text):
+            # 章節表記や番号付き見出しはレベルを推定して Markdown 見出しへ。
             if re.fullmatch(r"[第].{1,12}[章節部]", text):
                 parts.append(f"# {text}")
             elif re.fullmatch(r"\d+(\.\d+)*\s+.+", text):
@@ -269,6 +288,8 @@ def _blocks_to_markdown(blocks: list[TextBlock]) -> str:
 
 
 def _fallback_plain_text(json_docs: list[dict[str, Any]]) -> str:
+    # レイアウト抽出がうまくいかない場合の退避経路。
+    # document.text を連結して最低限の本文を確保する。
     chunks: list[str] = []
     for doc in json_docs:
         txt = str(doc.get("text", "") or "").strip()
@@ -278,6 +299,7 @@ def _fallback_plain_text(json_docs: list[dict[str, Any]]) -> str:
 
 
 def _collect_blocks(json_docs: list[dict[str, Any]]) -> list[TextBlock]:
+    # 複数JSON（複数ページ/複数分割）を横断して TextBlock を収集する。
     blocks: list[TextBlock] = []
     for doc in json_docs:
         for page in doc.get("pages", []):
@@ -290,10 +312,13 @@ def build_markdown_from_documentai_jsons(
     llm_service: Any,
     enable_gemini_polish: bool = True,
 ) -> tuple[str, dict[str, Any]]:
+    # 1) JSON -> block 収集
     blocks = _collect_blocks(json_docs)
+    # 2) 読み順整列 + ヘッダ/フッタ除去
     sorted_blocks = _sort_blocks_reading_order(blocks)
     filtered_blocks = _dedupe_repeated_header_footer(sorted_blocks)
 
+    # 3) Markdown 下書き生成（失敗時は plain text フォールバック）
     if filtered_blocks:
         draft = _blocks_to_markdown(filtered_blocks)
     else:
@@ -306,6 +331,7 @@ def build_markdown_from_documentai_jsons(
     polished = draft
     used_gemini = False
 
+    # 4) 任意で Gemini による体裁調整を実施（空結果は採用しない）
     if enable_gemini_polish:
         polished_candidate = llm_service.polish_markdown(draft)
         if polished_candidate.strip():
@@ -313,8 +339,10 @@ def build_markdown_from_documentai_jsons(
             used_gemini = True
 
     if not polished.endswith("\n"):
+        # 出力末尾を改行で統一し、後段処理や表示差分を安定化する。
         polished += "\n"
 
+    # 5) 観測用メトリクスを返す（ログ/監視向け）
     stats = {
         "json_docs": len(json_docs),
         "raw_blocks": len(blocks),

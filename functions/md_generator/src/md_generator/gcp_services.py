@@ -76,23 +76,39 @@ class LLMService:
         # OCR 生テキストの体裁のみを整える用途。
         # 事実追加や要約を抑止するため、プロンプトで明示的に制約する。
         prompt = f"""
-あなたはOCR後テキストをMarkdownへ整形する編集者です。
-以下のルールを守ってください。
+You are an expert editor converting OCR text from books into clean, faithful Markdown.
+GOAL
+- Reconstruct the original content as accurately as possible.
+- Improve readability with Markdown structure without changing meaning.
+STRICT RULES
+- Do NOT summarize.
+- Do NOT invent missing content.
+- Preserve the original language of the source text.
+- If the source text is Japanese, output must be Japanese.
+- Fix OCR errors only when the correction is obvious and certain.
+- If uncertain, keep the original text as-is.
+CLEANUP
+- Remove repeated noise such as page numbers, running headers, footers, and watermarks.
+- If the same line repeats across pages, keep it only once.
+STRUCTURE
+- Use headings (#, ##, ###) only when the section structure is clear from the text.
+- Preserve paragraph breaks; do not merge unrelated paragraphs.
+- Preserve lists (bullets/numbering) and indentation.
+TECHNICAL BOOK HANDLING
+- Detect code, CLI commands, config files, and logs; wrap them in fenced code blocks.
+- Infer the most likely language for the fence (e.g., python, bash, json, yaml, sql, text).
+- Preserve code and symbols exactly when possible (punctuation, brackets, quotes, backticks).
+- For tables, use Markdown tables if clearly tabular; otherwise keep as preformatted text.
+SELF-DEVELOPMENT / NONFICTION HANDLING
+- Preserve quotes and emphasized sentences.
+- If the author clearly highlights a “key takeaway”, keep it prominent using bold or blockquotes.
+- Do not add interpretations or commentary.
+OUTPUT
+- Output valid Markdown only.
+- No additional explanations outside the Markdown.
+- Do not translate unless the source text itself is translated.
 
-ルール:
-- 事実を追加しない
-- 原文を勝手に要約しない
-- 見出しらしい行は #, ##, ### に整形してよい
-- 箇条書きらしい行は Markdown リストに整形してよい
-- ページ番号、ヘッダ、フッタ、重複行、明らかなOCRノイズは除去してよい
-- 段落は自然な単位でまとめる
-- 文章順は原則維持
-- 表は完全再構築できない場合、無理に表にせずテキストとして崩さず残す
-- 日本語の不自然な改行は修正してよい
-- 出力はMarkdown本文のみ
-- コードフェンスは使わない
-
-入力テキスト:
+OCR TEXT:
 {draft_markdown[: self.settings.gemini_max_input_chars]}
 """
         response = self.model.generate_content(prompt)

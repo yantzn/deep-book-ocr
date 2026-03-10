@@ -1,6 +1,10 @@
+import importlib
 import logging
 from google.cloud import documentai_v1 as documentai
 from google.api_core.client_options import ClientOptions
+
+observability_module = importlib.import_module("ocr_trigger.observability")
+log_pipeline_event = observability_module.log_pipeline_event
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +21,29 @@ class DocumentAIService:
         )
 
         self.settings = settings
+        log_pipeline_event(
+            logger,
+            level=logging.INFO,
+            event="start_ocr",
+            stage="docai_service_initialized",
+            endpoint=endpoint,
+            project=settings.gcp_project_id,
+            location=settings.processor_location,
+        )
 
     def submit_batch_process(self, bucket, name, output_prefix):
         # 入力PDFと出力先プレフィックスを DocAI batch 処理用の request に組み立てる。
         # ここでは submit のみを担当し、完了待ちは呼び出し側（Workflow）で行う。
 
         input_uri = f"gs://{bucket}/{name}"
+        log_pipeline_event(
+            logger,
+            level=logging.INFO,
+            event="start_ocr",
+            stage="docai_submit_started",
+            input_uri=input_uri,
+            output_prefix=output_prefix,
+        )
 
         request = documentai.BatchProcessRequest(
             name=self.client.processor_path(
@@ -48,6 +69,14 @@ class DocumentAIService:
         )
 
         operation = self.client.batch_process_documents(request)
+        log_pipeline_event(
+            logger,
+            level=logging.INFO,
+            event="start_ocr",
+            stage="docai_submit_succeeded",
+            input_uri=input_uri,
+            operation_name=operation.operation.name,
+        )
 
         # 非同期LROの operation name を返して、後続が状態監視できるようにする。
         return operation.operation.name
