@@ -128,6 +128,14 @@ resource "google_project_iam_member" "github_sa_serviceusage_consumer" {
   member = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+resource "google_project_iam_member" "github_sa_serviceusage_admin" {
+  # infra/apis.tf で google_project_service.required を適用するために必要。
+  # (serviceusage.services.enable 権限)
+  project = var.project_id
+  role    = "roles/serviceusage.serviceUsageAdmin"
+  member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
 resource "google_project_iam_member" "github_sa_iam_service_account_user" {
   project = var.project_id
   # デプロイ時に target SA を指定して Cloud Functions / Run を作成するために必要。
