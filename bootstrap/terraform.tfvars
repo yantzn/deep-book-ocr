@@ -3,3 +3,5 @@ region             = "asia-northeast1"
 tfstate_location   = "ASIA-NORTHEAST1"
 github_repository  = "yantzn/deep-book-ocr"
 rotation_key       = "v1"
+enable_firestore   = true
+firestore_location = "asia-northeast1"
