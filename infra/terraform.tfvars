@@ -9,9 +9,9 @@ gcp_location        = "us-central1"
 
 documentai_processor_display_name = "deep-book-ocr-processor"
 
-github_actions_service_account_email    = "github-actions-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
-functions_runtime_service_account_email = "functions-runtime-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
-workflow_runner_service_account_email   = "workflow-runner-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
+github_actions_service_account_email    = "github-actions-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
+functions_runtime_service_account_email = "functions-runtime-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
+workflow_runner_service_account_email   = "workflow-runner-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
 
 firestore_jobs_collection = "ocr_jobs"
 workflow_name             = "docai-monitor"
