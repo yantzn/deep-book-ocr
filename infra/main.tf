@@ -4,6 +4,7 @@ data "google_project" "current" {
 
 resource "random_id" "bucket_suffix" {
   byte_length = 3
+
   keepers = {
     project = var.project_id
     region  = var.region
@@ -11,20 +12,17 @@ resource "random_id" "bucket_suffix" {
 }
 
 locals {
-  suffix = random_id.bucket_suffix.hex
-
-  input_bucket_name  = "${var.project_id}-input-${local.suffix}"
-  temp_bucket_name   = "${var.project_id}-temp-${local.suffix}"
-  output_bucket_name = "${var.project_id}-output-${local.suffix}"
-  source_bucket_name = var.source_bucket_name != "" ? var.source_bucket_name : "${var.project_id}-source-${local.suffix}"
-
+  suffix                          = random_id.bucket_suffix.hex
+  input_bucket_name               = "${var.project_id}-input-${local.suffix}"
+  temp_bucket_name                = "${var.project_id}-temp-${local.suffix}"
+  output_bucket_name              = "${var.project_id}-output-${local.suffix}"
+  source_bucket_name              = var.source_bucket_name != "" ? var.source_bucket_name : "${var.project_id}-source-${local.suffix}"
   artifact_registry_repository_id = "gcf-artifacts"
 
   ocr_trigger_source_object  = "functions/${var.ocr_trigger_function_name}/function-source.zip"
   md_generator_source_object = "functions/${var.md_generator_function_name}/function-source.zip"
 
-  md_generator_audience = "https://${var.region}-${var.project_id}.cloudfunctions.net/${var.md_generator_function_name}"
-
+  md_generator_audience          = google_cloudfunctions2_function.md_generator.service_config[0].uri
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
 
   runtime_sa_member  = "serviceAccount:${var.functions_runtime_service_account_email}"
@@ -73,7 +71,8 @@ resource "google_artifact_registry_repository" "gcf_artifacts" {
 # Optional Firestore database creation
 #
 resource "google_firestore_database" "default" {
-  count       = var.create_firestore_database ? 1 : 0
+  count = var.create_firestore_database ? 1 : 0
+
   project     = var.project_id
   name        = "(default)"
   location_id = var.region
@@ -228,8 +227,7 @@ resource "google_workflows_workflow" "docai_monitor" {
   ]
 }
 
-# md-generator を過去構成（イベント駆動）から現行構成（HTTP専用）へ移行するための
-# one-time 再作成トリガー。input 文字列を変更しない限り再実行時の再作成は発生しない。
+# md-generator を過去構成から安全に切り替えるための one-time trigger
 resource "terraform_data" "md_generator_http_migration" {
   input = "v2"
 }
@@ -255,12 +253,13 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   service_config {
-    available_memory      = var.ocr_trigger_available_memory
-    timeout_seconds       = var.ocr_trigger_timeout_seconds
-    max_instance_count    = var.ocr_trigger_max_instance_count
-    min_instance_count    = var.ocr_trigger_min_instance_count
-    ingress_settings      = "ALLOW_ALL"
-    service_account_email = var.functions_runtime_service_account_email
+    available_memory                 = var.ocr_trigger_available_memory
+    timeout_seconds                  = var.ocr_trigger_timeout_seconds
+    max_instance_count               = var.ocr_trigger_max_instance_count
+    min_instance_count               = var.ocr_trigger_min_instance_count
+    max_instance_request_concurrency = var.ocr_trigger_max_instance_request_concurrency
+    ingress_settings                 = "ALLOW_ALL"
+    service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
       APP_ENV                     = "gcp"
@@ -279,8 +278,6 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
       DOCAI_SUBMIT_TIMEOUT_SEC    = tostring(var.docai_submit_timeout_sec)
       LOG_EXECUTION_ID            = "true"
     }
-
-    max_instance_request_concurrency = 1
   }
 
   event_trigger {
@@ -332,12 +329,13 @@ resource "google_cloudfunctions2_function" "md_generator" {
   }
 
   service_config {
-    available_memory      = var.md_generator_available_memory
-    timeout_seconds       = var.md_generator_timeout_seconds
-    max_instance_count    = var.md_generator_max_instance_count
-    min_instance_count    = var.md_generator_min_instance_count
-    ingress_settings      = "ALLOW_ALL"
-    service_account_email = var.functions_runtime_service_account_email
+    available_memory                 = var.md_generator_available_memory
+    timeout_seconds                  = var.md_generator_timeout_seconds
+    max_instance_count               = var.md_generator_max_instance_count
+    min_instance_count               = var.md_generator_min_instance_count
+    max_instance_request_concurrency = var.md_generator_max_instance_request_concurrency
+    ingress_settings                 = "ALLOW_ALL"
+    service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
       APP_ENV                   = "gcp"
@@ -349,8 +347,6 @@ resource "google_cloudfunctions2_function" "md_generator" {
       GEMINI_MODEL_NAME         = var.gemini_model_name
       LOG_EXECUTION_ID          = "true"
     }
-
-    max_instance_request_concurrency = 1
   }
 
   depends_on = [

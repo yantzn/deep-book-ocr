@@ -129,7 +129,19 @@ variable "ocr_trigger_min_instance_count" {
 variable "md_generator_min_instance_count" {
   description = "Min instances for md-generator"
   type        = number
-  default     = 0
+  default     = 1
+}
+
+variable "ocr_trigger_max_instance_request_concurrency" {
+  description = "Max request concurrency for ocr-trigger"
+  type        = number
+  default     = 1
+}
+
+variable "md_generator_max_instance_request_concurrency" {
+  description = "Max request concurrency for md-generator"
+  type        = number
+  default     = 1
 }
 
 variable "docai_submit_timeout_sec" {

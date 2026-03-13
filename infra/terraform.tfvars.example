@@ -1,37 +1,95 @@
-project_id = "deep-book-ocr"
+############################################
+# GCP project configuration
+############################################
 
-region                     = "asia-northeast1"
-bucket_location            = "asia-northeast1"
+project_id = "YOUR_PROJECT_ID"
+
+region          = "asia-northeast1"
+bucket_location = "asia-northeast1"
+
 artifact_registry_location = "asia-northeast1"
 
+############################################
+# Document AI configuration
+############################################
+
 documentai_location = "us"
-gcp_location        = "us-central1"
 
 documentai_processor_display_name = "deep-book-ocr-processor"
 
-github_actions_service_account_email   = "github-actions-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
-functions_runtime_service_account_email = "functions-runtime-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
-workflow_runner_service_account_email   = "workflow-runner-sa-xxxx@deep-book-ocr.iam.gserviceaccount.com"
+############################################
+# Vertex AI / Gemini configuration
+############################################
 
-firestore_jobs_collection = "ocr_jobs"
-workflow_name             = "docai-monitor"
+gcp_location       = "us-central1"
+gemini_model_name  = "gemini-1.5-pro"
+
+############################################
+# Service Accounts (created in bootstrap)
+############################################
+
+# bootstrap Terraformで作成されたSAを指定
+# 例: github-actions-sa-xxxx@PROJECT_ID.iam.gserviceaccount.com
+
+github_actions_service_account_email = "github-actions-sa-XXXX@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+functions_runtime_service_account_email = "functions-runtime-sa-XXXX@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+workflow_runner_service_account_email = "workflow-runner-sa-XXXX@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+############################################
+# Cloud Functions names
+############################################
 
 ocr_trigger_function_name  = "ocr-trigger"
 md_generator_function_name = "md-generator"
 
-ocr_trigger_timeout_seconds = 300
+############################################
+# Firestore / Workflow
+############################################
+
+firestore_jobs_collection = "ocr_jobs"
+
+workflow_name = "docai-monitor"
+
+############################################
+# Cloud Functions runtime settings
+############################################
+
+ocr_trigger_timeout_seconds  = 300
 md_generator_timeout_seconds = 540
 
-ocr_trigger_available_memory = "512M"
+ocr_trigger_available_memory  = "512M"
 md_generator_available_memory = "1Gi"
 
-ocr_trigger_max_instance_count = 30
+ocr_trigger_max_instance_count  = 30
 md_generator_max_instance_count = 10
 
-ocr_trigger_min_instance_count = 1
-md_generator_min_instance_count = 0
+ocr_trigger_min_instance_count  = 1
+md_generator_min_instance_count = 1
+
+############################################
+# Cloud Run concurrency
+############################################
+
+ocr_trigger_max_instance_request_concurrency  = 1
+md_generator_max_instance_request_concurrency = 1
+
+############################################
+# Document AI job submission
+############################################
 
 docai_submit_timeout_sec = 60
-gemini_model_name        = "gemini-1.5-pro"
+
+############################################
+# Optional resources
+############################################
 
 create_firestore_database = false
+
+############################################
+# Optional existing source bucket
+############################################
+
+# 空文字なら Terraform が自動作成
+source_bucket_name = ""
