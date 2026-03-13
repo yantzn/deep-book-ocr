@@ -22,7 +22,6 @@ locals {
   ocr_trigger_source_object  = "functions/${var.ocr_trigger_function_name}/function-source.zip"
   md_generator_source_object = "functions/${var.md_generator_function_name}/function-source.zip"
 
-  md_generator_audience          = google_cloudfunctions2_function.md_generator.service_config[0].uri
   documentai_service_agent_email = "service-${data.google_project.current.number}@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
 
   runtime_sa_member  = "serviceAccount:${var.functions_runtime_service_account_email}"
@@ -153,7 +152,7 @@ resource "google_storage_bucket_iam_member" "runtime_output_admin" {
 }
 
 #
-# IAM for workflow SA
+# IAM for workflow SA on buckets
 #
 resource "google_storage_bucket_iam_member" "workflow_temp_viewer" {
   bucket = google_storage_bucket.buckets["temp"].name
@@ -184,7 +183,49 @@ resource "google_storage_bucket_iam_member" "docai_temp_creator" {
 }
 
 #
+# Project IAM for Cloud Functions runtime SA
+# - Document AI submit
+# - Firestore job store access
+# - Workflows execution trigger
+# - Vertex AI access for md-generator
+#
+resource "google_project_iam_member" "runtime_documentai_api_user" {
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_workflows_invoker" {
+  project = var.project_id
+  role    = "roles/workflows.invoker"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_vertex_ai_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = local.runtime_sa_member
+}
+
+#
+# Project IAM for workflow runner SA
+# - Firestore access while monitoring jobs
+#
+resource "google_project_iam_member" "workflow_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.workflow_sa_member
+}
+
+#
 # Workflow service account can invoke md-generator
+# Gen2 は Cloud Run 側の invoker も付与しておく
 #
 resource "google_cloudfunctions2_function_iam_member" "workflow_md_generator_invoker" {
   project        = var.project_id
@@ -192,6 +233,16 @@ resource "google_cloudfunctions2_function_iam_member" "workflow_md_generator_inv
   cloud_function = google_cloudfunctions2_function.md_generator.name
   role           = "roles/cloudfunctions.invoker"
   member         = local.workflow_sa_member
+}
+
+resource "google_cloud_run_service_iam_member" "workflow_md_generator_run_invoker" {
+  project  = var.project_id
+  location = var.region
+  service  = google_cloudfunctions2_function.md_generator.name
+  role     = "roles/run.invoker"
+  member   = local.workflow_sa_member
+
+  depends_on = [google_cloudfunctions2_function.md_generator]
 }
 
 # Workflows API 有効化後、初回作成ではサービスエージェントが未生成のままになることがあるため
@@ -202,6 +253,70 @@ resource "google_project_service_identity" "workflows_service_agent" {
   service  = "workflows.googleapis.com"
 
   depends_on = [google_project_service.required]
+}
+
+#
+# Markdown generator function
+# 先に作って URI を workflow / ocr-trigger で参照する
+#
+resource "google_cloudfunctions2_function" "md_generator" {
+  name     = var.md_generator_function_name
+  location = var.region
+
+  build_config {
+    runtime         = "python310"
+    entry_point     = "generate_markdown"
+    service_account = local.github_actions_service_account_resource
+
+    source {
+      storage_source {
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.md_generator_source.name
+      }
+    }
+  }
+
+  service_config {
+    available_memory                 = var.md_generator_available_memory
+    timeout_seconds                  = var.md_generator_timeout_seconds
+    max_instance_count               = var.md_generator_max_instance_count
+    min_instance_count               = var.md_generator_min_instance_count
+    max_instance_request_concurrency = var.md_generator_max_instance_request_concurrency
+    ingress_settings                 = "ALLOW_ALL"
+    service_account_email            = var.functions_runtime_service_account_email
+
+    environment_variables = {
+      APP_ENV                   = "gcp"
+      GCP_PROJECT_ID            = var.project_id
+      GCP_LOCATION              = var.gcp_location
+      TEMP_BUCKET               = google_storage_bucket.buckets["temp"].name
+      OUTPUT_BUCKET             = google_storage_bucket.buckets["output"].name
+      FIRESTORE_JOBS_COLLECTION = var.firestore_jobs_collection
+      GEMINI_MODEL_NAME         = var.gemini_model_name
+      LOG_EXECUTION_ID          = "true"
+    }
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_storage_bucket_iam_member.runtime_temp_viewer,
+    google_storage_bucket_iam_member.runtime_output_admin,
+    google_project_iam_member.runtime_firestore_user,
+    google_project_iam_member.runtime_vertex_ai_user,
+    google_storage_bucket_object.md_generator_source
+  ]
+
+  lifecycle {
+    replace_triggered_by = [terraform_data.md_generator_http_migration]
+
+    ignore_changes = [
+      build_config[0].source[0].storage_source[0].generation,
+    ]
+  }
+}
+
+locals {
+  md_generator_audience = google_cloudfunctions2_function.md_generator.service_config[0].uri
 }
 
 #
@@ -223,7 +338,9 @@ resource "google_workflows_workflow" "docai_monitor" {
   depends_on = [
     google_project_service.required,
     google_project_service_identity.workflows_service_agent,
-    google_cloudfunctions2_function.md_generator
+    google_project_iam_member.workflow_firestore_user,
+    google_cloudfunctions2_function.md_generator,
+    google_cloud_run_service_iam_member.workflow_md_generator_run_invoker
   ]
 }
 
@@ -297,68 +414,14 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     google_storage_bucket_iam_member.runtime_input_viewer,
     google_storage_bucket_iam_member.docai_input_viewer,
     google_storage_bucket_iam_member.docai_temp_creator,
+    google_project_iam_member.runtime_documentai_api_user,
+    google_project_iam_member.runtime_firestore_user,
+    google_project_iam_member.runtime_workflows_invoker,
     google_storage_bucket_object.ocr_trigger_source,
     google_workflows_workflow.docai_monitor
   ]
 
   lifecycle {
-    ignore_changes = [
-      build_config[0].source[0].storage_source[0].generation,
-    ]
-  }
-}
-
-#
-# Markdown generator function (HTTP only)
-#
-resource "google_cloudfunctions2_function" "md_generator" {
-  name     = var.md_generator_function_name
-  location = var.region
-
-  build_config {
-    runtime         = "python310"
-    entry_point     = "generate_markdown"
-    service_account = local.github_actions_service_account_resource
-
-    source {
-      storage_source {
-        bucket = google_storage_bucket.buckets["source"].name
-        object = google_storage_bucket_object.md_generator_source.name
-      }
-    }
-  }
-
-  service_config {
-    available_memory                 = var.md_generator_available_memory
-    timeout_seconds                  = var.md_generator_timeout_seconds
-    max_instance_count               = var.md_generator_max_instance_count
-    min_instance_count               = var.md_generator_min_instance_count
-    max_instance_request_concurrency = var.md_generator_max_instance_request_concurrency
-    ingress_settings                 = "ALLOW_ALL"
-    service_account_email            = var.functions_runtime_service_account_email
-
-    environment_variables = {
-      APP_ENV                   = "gcp"
-      GCP_PROJECT_ID            = var.project_id
-      GCP_LOCATION              = var.gcp_location
-      TEMP_BUCKET               = google_storage_bucket.buckets["temp"].name
-      OUTPUT_BUCKET             = google_storage_bucket.buckets["output"].name
-      FIRESTORE_JOBS_COLLECTION = var.firestore_jobs_collection
-      GEMINI_MODEL_NAME         = var.gemini_model_name
-      LOG_EXECUTION_ID          = "true"
-    }
-  }
-
-  depends_on = [
-    google_project_service.required,
-    google_storage_bucket_iam_member.runtime_temp_viewer,
-    google_storage_bucket_iam_member.runtime_output_admin,
-    google_storage_bucket_object.md_generator_source
-  ]
-
-  lifecycle {
-    replace_triggered_by = [terraform_data.md_generator_http_migration]
-
     ignore_changes = [
       build_config[0].source[0].storage_source[0].generation,
     ]
