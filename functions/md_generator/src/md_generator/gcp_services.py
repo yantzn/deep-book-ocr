@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_gs_uri(gs_uri: str) -> tuple[str, str]:
+    """`gs://...` 形式のURIを (bucket, prefix) に分解する。"""
     # `gs://bucket/prefix...` を (bucket, prefix) へ分解する共通ヘルパ。
     # Storage API 呼び出し前に形式不正を早期検知する。
     if not gs_uri.startswith("gs://"):
@@ -30,11 +31,13 @@ def _parse_gs_uri(gs_uri: str) -> tuple[str, str]:
 
 class StorageService:
     def __init__(self, settings: Settings):
+        """GCS 読み書き機能を提供するサービス。"""
         self.settings = settings
         # すべての GCS 操作を同一 project コンテキストで実行する。
         self.client = storage.Client(project=settings.gcp_project_id)
 
     def list_object_names(self, bucket_name: str, prefix: str) -> list[str]:
+        """指定プレフィックス配下のオブジェクト名一覧をソートして返す。"""
         # OCR 出力 JSON はページ順の処理が重要なため、呼び出し側で
         # 安定して扱えるよう名前順ソートで返す。
         logger.info(
@@ -56,6 +59,7 @@ class StorageService:
         return names
 
     def list_object_names_from_gs_uri(self, gs_uri_prefix: str) -> list[str]:
+        """`gs://bucket/prefix` を受け取り、オブジェクト名一覧を返す。"""
         bucket, prefix = _parse_gs_uri(gs_uri_prefix)
         return self.list_object_names(bucket_name=bucket, prefix=prefix)
 
@@ -67,6 +71,7 @@ class StorageService:
         max_attempts: int = 3,
         base_sleep_sec: float = 1.0,
     ) -> str:
+        """GCSテキストをリトライ付きで取得し、文字列として返す。"""
         bucket = self.client.bucket(bucket_name)
         blob = bucket.blob(object_name)
 
@@ -134,6 +139,7 @@ class StorageService:
                 time.sleep(sleep_sec)
 
     def download_json_documents_from_gs_uri_prefix(self, gs_uri_prefix: str) -> list[dict]:
+        """DocAI 出力プレフィックス配下の JSON ドキュメント群を読み込む。"""
         # DocAI の出力プレフィックス配下から JSON のみを読み込む。
         # メタファイル等が混在しても `.json` 以外は無視する。
         bucket_name, prefix = _parse_gs_uri(gs_uri_prefix)
@@ -150,6 +156,7 @@ class StorageService:
 
         docs: list[dict] = []
         for object_name in json_object_names:
+            # 1ファイルずつ取得して JSON としてパースし、順序を保って積み上げる。
             raw = self._download_text_with_retry(
                 bucket_name=bucket_name,
                 object_name=object_name,
@@ -170,6 +177,7 @@ class StorageService:
         return docs
 
     def write_markdown(self, bucket_name: str, object_name: str, markdown: str) -> str:
+        """Markdown を GCS へ保存し、保存先 `gs://` URI を返す。"""
         # 最終成果物を UTF-8 Markdown として保存し、追跡用に gs:// URI を返す。
         logger.info(
             "Uploading markdown to GCS: bucket=%s object=%s chars=%d",
@@ -193,12 +201,14 @@ class StorageService:
         return f"gs://{bucket_name}/{object_name}"
 
     def object_exists(self, bucket_name: str, object_name: str) -> bool:
+        """指定オブジェクトの存在有無を返す。"""
         blob = self.client.bucket(bucket_name).blob(object_name)
         return blob.exists()
 
 
 class LLMService:
     def __init__(self, settings: Settings):
+        """Vertex AI Gemini を使った Markdown 整形サービス。"""
         self.settings = settings
         # Vertex AI 初期化はプロセス単位で一度行い、以後同モデルを再利用する。
         vertexai_init(project=settings.gcp_project_id,
@@ -206,6 +216,7 @@ class LLMService:
         self.model = GenerativeModel(settings.gemini_model_name)
 
     def polish_markdown(self, draft_markdown: str) -> str:
+        """OCR下書きMarkdownを、意味を変えずに読みやすく整形する。"""
         # OCR 生テキストの体裁のみを整える用途。
         # 事実追加や要約を抑止するため、プロンプトで明示的に制約する。
         prompt = f"""
@@ -264,6 +275,7 @@ class Services:
 
 
 def build_services(settings: Settings) -> Services:
+    """利用する外部サービス依存を組み立てて返す。"""
     # 外部サービス依存の生成を1箇所に集約し、テスト時の差し替えを容易にする。
     return Services(
         storage_service=StorageService(settings),

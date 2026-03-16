@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+from functools import lru_cache
 
 import functions_framework
 from cloudevents.http import CloudEvent
@@ -54,11 +55,15 @@ def _setup_logging() -> None:
         )
 
 
-settings = get_settings()
-# サービスは import 時に 1 度だけ初期化し、リクエスト間でクライアントを再利用する。
-docai_service = DocumentAIService(settings)
-job_store = FirestoreJobStore(settings)
-workflow_service = WorkflowExecutionService(settings)
+@lru_cache(maxsize=1)
+def _get_runtime_services() -> tuple[DocumentAIService, FirestoreJobStore, WorkflowExecutionService]:
+    """実行時サービスを遅延初期化し、同一プロセス内で再利用する。"""
+    settings = get_settings()
+    return (
+        DocumentAIService(settings),
+        FirestoreJobStore(settings),
+        WorkflowExecutionService(settings),
+    )
 
 
 @functions_framework.cloud_event
@@ -67,8 +72,6 @@ def start_ocr(event: CloudEvent):
     # リクエスト単位の識別子と、全体処理時間計測用のタイマー。
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
-
-    _setup_logging()
 
     log_pipeline_event(
         logger,
@@ -79,6 +82,11 @@ def start_ocr(event: CloudEvent):
     )
 
     try:
+        _setup_logging()
+
+        # 初回リクエスト時にのみ依存サービスを初期化し、以降はキャッシュを再利用する。
+        docai_service, job_store, workflow_service = _get_runtime_services()
+
         # Cloud Storage イベントから必要フィールドを取り出して正規化する。
         data = event.data or {}
         bucket = str(data.get("bucket") or "").strip()

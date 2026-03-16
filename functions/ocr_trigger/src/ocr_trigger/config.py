@@ -25,30 +25,36 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # 実行環境の識別子。ローカル実行か GCP 本番かを切り替える。
     # local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
 
+    # プロジェクト/リージョンなど GCP 基本設定。
     # GCP project
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
     gcp_location: str = Field(default="asia-northeast1", alias="GCP_LOCATION")
 
+    # 利用する Document AI プロセッサ設定。
     # Document AI processor
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
     # processor id or full resource
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 
+    # OCR 一時出力先とジョブ管理先。
     # Document AI output bucket (gs://... or bucket name)
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
     firestore_jobs_collection: str = Field(...,
                                            alias="FIRESTORE_JOBS_COLLECTION")
 
+    # DocAI 監視 Workflow 実行に必要な設定。
     docai_monitor_workflow_name: str = Field(
         ...,
         alias="DOCAI_MONITOR_WORKFLOW_NAME",
     )
     workflow_region: str = Field(..., alias="WORKFLOW_REGION")
 
+    # ログレベルと DocAI submit API 呼び出しのタイムアウト秒。
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     docai_submit_timeout_sec: int = Field(
         default=120,
@@ -57,6 +63,7 @@ class Settings(BaseSettings):
 
     @property
     def is_gcp(self) -> bool:
+        """実行環境が GCP 本番かどうかを返す。"""
         return self.app_env.lower() == "gcp"
 
     def processor_id_normalized(self) -> str:
@@ -68,6 +75,7 @@ class Settings(BaseSettings):
         """
         value = self.processor_id.strip()
         if "/processors/" in value:
+            # 完全修飾名の場合は末尾の processor id のみ抽出する。
             return value.split("/processors/")[-1].strip("/")
         return value
 
@@ -77,10 +85,13 @@ class Settings(BaseSettings):
         """
         value = self.temp_bucket.strip()
         if value.startswith("gs://"):
+            # 既に gs:// 形式なら末尾スラッシュだけ整える。
             return value.rstrip("/") + "/"
+        # バケット名のみ指定された場合は gs:// を補完する。
         return f"gs://{value.rstrip('/')}/"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Settings を 1 プロセス内でキャッシュして再利用する。"""
     return Settings()
