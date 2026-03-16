@@ -30,7 +30,9 @@ class FirestoreJobStore:
     def get_job(self, job_id: str) -> dict[str, Any]:
         # 指定 job_id のドキュメントを取得する。
         # 存在しない場合は呼び出し側で 404/失敗処理へ分岐できるよう KeyError を投げる。
-        doc = self._collection().document(job_id).get()
+        doc = self._collection().document(job_id).get(
+            timeout=self.settings.firestore_timeout_sec,
+        )
         if not doc.exists:
             raise KeyError(f"job not found: {job_id}")
         return doc.to_dict() or {}
@@ -40,4 +42,8 @@ class FirestoreJobStore:
         # すべての更新に updated_at を付与し、最終更新時刻を一元管理する。
         payload = dict(fields)
         payload["updated_at"] = self.now_iso()
-        self._collection().document(job_id).set(payload, merge=True)
+        self._collection().document(job_id).set(
+            payload,
+            merge=True,
+            timeout=self.settings.firestore_timeout_sec,
+        )

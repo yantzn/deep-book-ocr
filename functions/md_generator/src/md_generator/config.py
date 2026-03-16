@@ -45,6 +45,24 @@ class Settings(BaseSettings):
         default=True, alias="ENABLE_GEMINI_POLISH")
     gemini_max_input_chars: int = Field(
         default=120000, alias="GEMINI_MAX_INPUT_CHARS")
+    gemini_timeout_sec: float = Field(
+        default=60.0, alias="GEMINI_TIMEOUT_SEC")
+
+    # GCS I/O のタイムアウト/リトライ設定。
+    gcs_download_timeout_sec: float = Field(
+        default=30.0, alias="GCS_DOWNLOAD_TIMEOUT_SEC")
+    gcs_upload_timeout_sec: float = Field(
+        default=30.0, alias="GCS_UPLOAD_TIMEOUT_SEC")
+    gcs_exists_timeout_sec: float = Field(
+        default=10.0, alias="GCS_EXISTS_TIMEOUT_SEC")
+    gcs_download_max_attempts: int = Field(
+        default=3, alias="GCS_DOWNLOAD_MAX_ATTEMPTS")
+    gcs_download_base_sleep_sec: float = Field(
+        default=1.0, alias="GCS_DOWNLOAD_BASE_SLEEP_SEC")
+
+    # Firestore 呼び出しタイムアウト。
+    firestore_timeout_sec: float = Field(
+        default=20.0, alias="FIRESTORE_TIMEOUT_SEC")
 
     # アプリケーションログレベル。
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

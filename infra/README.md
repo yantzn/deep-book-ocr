@@ -94,6 +94,12 @@ terraform apply tfplan
 - `gcp_location` : Gemini のリージョン（例: `us-central1`）
 - `gemini_model_name` : 生成モデル名（既定: `gemini-1.5-pro`）
 - `docai_submit_timeout_sec` : OCR submit タイムアウト秒
+- `ocr_firestore_timeout_sec` : ocr-trigger の Firestore timeout 秒
+- `workflow_execute_timeout_sec` : ocr-trigger の Workflows create_execution timeout 秒
+- `md_firestore_timeout_sec` : md-generator の Firestore timeout 秒
+- `gemini_timeout_sec` : Gemini リクエスト timeout 秒
+- `gcs_download_timeout_sec` / `gcs_upload_timeout_sec` / `gcs_exists_timeout_sec` : md-generator の GCS I/O timeout 秒
+- `gcs_download_max_attempts` / `gcs_download_base_sleep_sec` : md-generator の JSON ダウンロード再試行設定
 - `create_firestore_database` : infra 側で Firestore を作るか（既定 `false`）
 
 ## 出力

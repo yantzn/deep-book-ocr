@@ -25,5 +25,8 @@ class WorkflowExecutionService:
 
         execution = Execution(argument=json.dumps(payload, ensure_ascii=False))
         response = self.client.create_execution(
-            parent=workflow_path, execution=execution)
+            parent=workflow_path,
+            execution=execution,
+            timeout=self.settings.workflow_execute_timeout_sec,
+        )
         return response.name

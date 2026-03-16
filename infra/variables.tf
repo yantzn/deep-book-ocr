@@ -150,10 +150,76 @@ variable "docai_submit_timeout_sec" {
   default     = 60
 }
 
+variable "ocr_firestore_timeout_sec" {
+  description = "Firestore timeout for ocr-trigger in seconds"
+  type        = number
+  default     = 20
+}
+
+variable "workflow_execute_timeout_sec" {
+  description = "Workflows create_execution timeout for ocr-trigger in seconds"
+  type        = number
+  default     = 20
+}
+
 variable "gemini_model_name" {
   description = "Gemini model name for markdown polishing"
   type        = string
   default     = "gemini-1.5-pro"
+}
+
+variable "enable_gemini_polish" {
+  description = "Whether md-generator applies Gemini polish step"
+  type        = bool
+  default     = true
+}
+
+variable "gemini_max_input_chars" {
+  description = "Max input characters sent to Gemini"
+  type        = number
+  default     = 120000
+}
+
+variable "gemini_timeout_sec" {
+  description = "Gemini request timeout in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "gcs_download_timeout_sec" {
+  description = "GCS download timeout for md-generator in seconds"
+  type        = number
+  default     = 30
+}
+
+variable "gcs_upload_timeout_sec" {
+  description = "GCS upload timeout for md-generator in seconds"
+  type        = number
+  default     = 30
+}
+
+variable "gcs_exists_timeout_sec" {
+  description = "GCS object exists timeout for md-generator in seconds"
+  type        = number
+  default     = 10
+}
+
+variable "gcs_download_max_attempts" {
+  description = "Max retry attempts for md-generator JSON downloads"
+  type        = number
+  default     = 3
+}
+
+variable "gcs_download_base_sleep_sec" {
+  description = "Base sleep seconds for md-generator download retry backoff"
+  type        = number
+  default     = 1
+}
+
+variable "md_firestore_timeout_sec" {
+  description = "Firestore timeout for md-generator in seconds"
+  type        = number
+  default     = 20
 }
 
 variable "create_firestore_database" {

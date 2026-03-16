@@ -215,14 +215,23 @@ resource "google_cloudfunctions2_function" "md_generator" {
     service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
-      APP_ENV                   = "gcp"
-      GCP_PROJECT_ID            = var.project_id
-      GCP_LOCATION              = var.gcp_location
-      TEMP_BUCKET               = google_storage_bucket.buckets["temp"].name
-      OUTPUT_BUCKET             = google_storage_bucket.buckets["output"].name
-      FIRESTORE_JOBS_COLLECTION = var.firestore_jobs_collection
-      GEMINI_MODEL_NAME         = var.gemini_model_name
-      LOG_EXECUTION_ID          = "true"
+      APP_ENV                     = "gcp"
+      GCP_PROJECT_ID              = var.project_id
+      GCP_LOCATION                = var.gcp_location
+      TEMP_BUCKET                 = google_storage_bucket.buckets["temp"].name
+      OUTPUT_BUCKET               = google_storage_bucket.buckets["output"].name
+      FIRESTORE_JOBS_COLLECTION   = var.firestore_jobs_collection
+      GEMINI_MODEL_NAME           = var.gemini_model_name
+      ENABLE_GEMINI_POLISH        = tostring(var.enable_gemini_polish)
+      GEMINI_MAX_INPUT_CHARS      = tostring(var.gemini_max_input_chars)
+      GEMINI_TIMEOUT_SEC          = tostring(var.gemini_timeout_sec)
+      GCS_DOWNLOAD_TIMEOUT_SEC    = tostring(var.gcs_download_timeout_sec)
+      GCS_UPLOAD_TIMEOUT_SEC      = tostring(var.gcs_upload_timeout_sec)
+      GCS_EXISTS_TIMEOUT_SEC      = tostring(var.gcs_exists_timeout_sec)
+      GCS_DOWNLOAD_MAX_ATTEMPTS   = tostring(var.gcs_download_max_attempts)
+      GCS_DOWNLOAD_BASE_SLEEP_SEC = tostring(var.gcs_download_base_sleep_sec)
+      FIRESTORE_TIMEOUT_SEC       = tostring(var.md_firestore_timeout_sec)
+      LOG_EXECUTION_ID            = "true"
     }
   }
 
@@ -336,21 +345,23 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
-      APP_ENV                     = "gcp"
-      GCP_PROJECT_ID              = var.project_id
-      GCP_LOCATION                = var.gcp_location
-      PROCESSOR_ID                = google_document_ai_processor.ocr.name
-      PROCESSOR_LOCATION          = var.documentai_location
-      INPUT_BUCKET                = google_storage_bucket.buckets["input"].name
-      TEMP_BUCKET                 = "gs://${google_storage_bucket.buckets["temp"].name}"
-      OUTPUT_BUCKET               = google_storage_bucket.buckets["output"].name
-      FIRESTORE_JOBS_COLLECTION   = var.firestore_jobs_collection
-      DOCAI_MONITOR_WORKFLOW_NAME = google_workflows_workflow.docai_monitor.name
-      WORKFLOW_REGION             = var.region
-      MD_GENERATOR_URL            = google_cloudfunctions2_function.md_generator.service_config[0].uri
-      MD_GENERATOR_AUDIENCE       = local.md_generator_audience
-      DOCAI_SUBMIT_TIMEOUT_SEC    = tostring(var.docai_submit_timeout_sec)
-      LOG_EXECUTION_ID            = "true"
+      APP_ENV                      = "gcp"
+      GCP_PROJECT_ID               = var.project_id
+      GCP_LOCATION                 = var.gcp_location
+      PROCESSOR_ID                 = google_document_ai_processor.ocr.name
+      PROCESSOR_LOCATION           = var.documentai_location
+      INPUT_BUCKET                 = google_storage_bucket.buckets["input"].name
+      TEMP_BUCKET                  = "gs://${google_storage_bucket.buckets["temp"].name}"
+      OUTPUT_BUCKET                = google_storage_bucket.buckets["output"].name
+      FIRESTORE_JOBS_COLLECTION    = var.firestore_jobs_collection
+      DOCAI_MONITOR_WORKFLOW_NAME  = google_workflows_workflow.docai_monitor.name
+      WORKFLOW_REGION              = var.region
+      MD_GENERATOR_URL             = google_cloudfunctions2_function.md_generator.service_config[0].uri
+      MD_GENERATOR_AUDIENCE        = local.md_generator_audience
+      DOCAI_SUBMIT_TIMEOUT_SEC     = tostring(var.docai_submit_timeout_sec)
+      FIRESTORE_TIMEOUT_SEC        = tostring(var.ocr_firestore_timeout_sec)
+      WORKFLOW_EXECUTE_TIMEOUT_SEC = tostring(var.workflow_execute_timeout_sec)
+      LOG_EXECUTION_ID             = "true"
     }
   }
 
