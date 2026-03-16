@@ -27,11 +27,16 @@ main:
           name: $${operation_name}
         result: operation
 
+    - normalizeOperation:
+        assign:
+          - operation_done: $${default(map.get(operation, "done"), false)}
+          - operation_error: $${map.get(operation, "error")}
+
     - checkDone:
         switch:
-          - condition: $${operation.done == false}
+          - condition: $${operation_done == false}
             next: waitStep
-          - condition: $${map.get(operation, "error") != null}
+          - condition: $${operation_error != null}
             next: markDocAiFailed
         next: markDocAiSucceeded
 
@@ -52,7 +57,7 @@ main:
               status:
                 stringValue: "DOC_AI_FAILED"
               last_error:
-                stringValue: $${json.encode_to_string(operation.error)}
+                stringValue: $${json.encode_to_string(operation_error)}
         next: finishFailed
 
     - markDocAiSucceeded:
