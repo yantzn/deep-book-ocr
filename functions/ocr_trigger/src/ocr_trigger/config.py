@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # GCP project
     gcp_project_id: str = Field(
         default="deep-book-ocr", alias="GCP_PROJECT_ID")
+    gcp_location: str = Field(default="asia-northeast1", alias="GCP_LOCATION")
 
     # Document AI processor
     processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
@@ -39,41 +40,47 @@ class Settings(BaseSettings):
 
     # Document AI output bucket (gs://... or bucket name)
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
+    firestore_jobs_collection: str = Field(...,
+                                           alias="FIRESTORE_JOBS_COLLECTION")
 
-    # Logging
+    docai_monitor_workflow_name: str = Field(
+        ...,
+        alias="DOCAI_MONITOR_WORKFLOW_NAME",
+    )
+    workflow_region: str = Field(..., alias="WORKFLOW_REGION")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-
-    # (将来拡張用) submit に時間がかかるケースに備えた設定値。
-    # 今の実装は operation を待たず即返すが、ログや検証で利用する。
     docai_submit_timeout_sec: int = Field(
-        default=120, alias="DOCAI_SUBMIT_TIMEOUT_SEC")
+        default=120,
+        alias="DOCAI_SUBMIT_TIMEOUT_SEC",
+    )
 
     @property
     def is_gcp(self) -> bool:
-        # ログ初期化や実行モード分岐で使う環境判定フラグ。
         return self.app_env.lower() == "gcp"
 
     def processor_id_normalized(self) -> str:
         """
-        Document AI の processor_id を正規化。
-        - projects/.../locations/.../processors/... を渡されたら ... の部分だけにする
+        PROCESSOR_ID が
+        - processor id 単体
+        - projects/.../locations/.../processors/... の完全修飾名
+        のどちらでも扱えるようにする。
         """
-        # 入力揺れ（idのみ / 完全リソース名）を吸収して後段処理を単純化する。
-        v = self.processor_id.strip()
-        if "/processors/" in v:
-            return v.split("/processors/")[-1].strip("/")
-        return v
+        value = self.processor_id.strip()
+        if "/processors/" in value:
+            return value.split("/processors/")[-1].strip("/")
+        return value
 
     def temp_bucket_uri(self) -> str:
-        """TEMP_BUCKET を gs://<bucket>/ 形式に揃える（末尾 / 付与）。"""
-        # bucket 名のみ渡された場合も URI へ正規化し、呼び出し側の分岐をなくす。
-        t = self.temp_bucket.strip()
-        if t.startswith("gs://"):
-            return t.rstrip("/") + "/"
-        return f"gs://{t.rstrip('/')}/"
+        """
+        TEMP_BUCKET を gs://bucket/ 形式へ正規化する。
+        """
+        value = self.temp_bucket.strip()
+        if value.startswith("gs://"):
+            return value.rstrip("/") + "/"
+        return f"gs://{value.rstrip('/')}/"
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    # 設定の再パースを避けるため、プロセス内で1回だけ生成して再利用する。
     return Settings()
