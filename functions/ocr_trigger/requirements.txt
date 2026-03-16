@@ -60,6 +60,8 @@ google-cloud-logging==3.13.0
     # via -r requirements.in
 google-cloud-storage==3.9.0
     # via -r requirements.in
+google-cloud-workflows>=1.14.0
+    # via -r requirements.in
 googleapis-common-protos[grpc]==1.72.0
     # via
     #   google-api-core
