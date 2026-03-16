@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from functools import lru_cache
+from typing import Any
 
 import functions_framework
 from cloudevents.http import CloudEvent
@@ -27,6 +28,27 @@ WorkflowExecutionService = workflow_service_module.WorkflowExecutionService
 log_pipeline_event = observability_module.log_pipeline_event
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _log_event(
+    *,
+    level: int,
+    stage: str,
+    request_id: str,
+    **fields: Any,
+) -> None:
+    log_pipeline_event(
+        logger,
+        level=level,
+        event="start_ocr",
+        stage=stage,
+        request_id=request_id,
+        **fields,
+    )
 
 
 def _setup_logging() -> None:
@@ -73,10 +95,8 @@ def start_ocr(event: CloudEvent):
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
 
-    log_pipeline_event(
-        logger,
+    _log_event(
         level=logging.INFO,
-        event="start_ocr",
         stage="event_received",
         request_id=request_id,
     )
@@ -96,20 +116,16 @@ def start_ocr(event: CloudEvent):
 
         # オブジェクト位置が不足している不正イベントは早期に拒否する。
         if not bucket or not name:
-            log_pipeline_event(
-                logger,
+            _log_event(
                 level=logging.WARNING,
-                event="start_ocr",
                 stage="event_rejected",
                 request_id=request_id,
                 reason="missing_bucket_or_name",
             )
             return ("invalid event data", 400)
 
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="start_ocr",
             stage="event_parsed",
             request_id=request_id,
             bucket=bucket,
@@ -120,10 +136,8 @@ def start_ocr(event: CloudEvent):
 
         # PDF のみを処理対象とし、それ以外の拡張子は意図的にスキップする。
         if not name.lower().endswith(".pdf"):
-            log_pipeline_event(
-                logger,
+            _log_event(
                 level=logging.INFO,
-                event="start_ocr",
                 stage="skipped",
                 request_id=request_id,
                 reason="non_pdf_object",
@@ -158,10 +172,8 @@ def start_ocr(event: CloudEvent):
             merge=True,
         )
 
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="start_ocr",
             stage="job_created",
             request_id=request_id,
             job_id=job_id,
@@ -186,26 +198,22 @@ def start_ocr(event: CloudEvent):
             },
         )
 
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="start_ocr",
             stage="docai_monitor_started",
             request_id=request_id,
             job_id=job_id,
             workflow_execution_name=workflow_execution_name,
             operation_name=operation_name,
-            elapsed_ms=int((time.perf_counter() - submit_started) * 1000),
+            elapsed_ms=_elapsed_ms(submit_started),
         )
 
         return ("OK", 200)
 
     except Exception as e:  # noqa: BLE001
         # 想定外エラーはリクエスト文脈付きで記録し、500 を返す。
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.ERROR,
-            event="start_ocr",
             stage="failed",
             request_id=request_id,
             error=repr(e),
@@ -216,11 +224,9 @@ def start_ocr(event: CloudEvent):
 
     finally:
         # 成否に関わらず、必ず完了メトリクスを出力する。
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="start_ocr",
             stage="finished",
             request_id=request_id,
-            total_elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+            total_elapsed_ms=_elapsed_ms(started_at),
         )

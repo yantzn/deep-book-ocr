@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+from typing import Any
 
 import functions_framework
 from flask import Request
@@ -26,6 +27,42 @@ log_pipeline_event = observability_module.log_pipeline_event
 parse_trace_id = observability_module.parse_trace_id
 
 logger = logging.getLogger(__name__)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _log_event(
+    *,
+    level: int,
+    stage: str,
+    request_id: str,
+    trace_id: str,
+    job_id: str = "",
+    **fields: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "trace_id": trace_id,
+    }
+    if job_id:
+        payload["job_id"] = job_id
+    payload.update(fields)
+
+    log_pipeline_event(
+        logger,
+        level=level,
+        event="generate_markdown",
+        stage=stage,
+        **payload,
+    )
+
+
+def _build_runtime_dependencies():
+    settings = get_settings()
+    services = build_services(settings)
+    return settings, services.storage_service, services.llm_service, FirestoreJobStore(settings)
 
 
 def _setup_logging() -> None:
@@ -65,16 +102,10 @@ def generate_markdown(request: Request):
 
     # 設定・外部サービス依存を初期化する。
     # NOTE: リクエストごとに依存を生成して、テスト差し替えや設定反映を容易にする。
-    settings = get_settings()
-    services = build_services(settings)
-    storage_service = services.storage_service
-    llm_service = services.llm_service
-    job_store = FirestoreJobStore(settings)
+    settings, storage_service, llm_service, job_store = _build_runtime_dependencies()
 
-    log_pipeline_event(
-        logger,
+    _log_event(
         level=logging.INFO,
-        event="generate_markdown",
         stage="request_received",
         request_id=request_id,
         trace_id=trace_id,
@@ -86,10 +117,8 @@ def generate_markdown(request: Request):
         body = request.get_json(silent=True) or {}
         job_id = str(body.get("job_id") or "").strip()
 
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="request_validated",
             request_id=request_id,
             job_id=job_id,
@@ -97,10 +126,8 @@ def generate_markdown(request: Request):
         )
 
         if not job_id:
-            log_pipeline_event(
-                logger,
+            _log_event(
                 level=logging.WARNING,
-                event="generate_markdown",
                 stage="request_rejected",
                 request_id=request_id,
                 trace_id=trace_id,
@@ -112,10 +139,8 @@ def generate_markdown(request: Request):
         # temp_output_prefix: DocAI JSON 出力先
         # input_name/input_generation: Markdown 出力オブジェクト名の構築に利用
         job = job_store.get_job(job_id)
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="job_loaded",
             request_id=request_id,
             job_id=job_id,
@@ -135,10 +160,8 @@ def generate_markdown(request: Request):
                 "md_started_at": job_store.now_iso(),
             },
         )
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="job_status_updated",
             request_id=request_id,
             job_id=job_id,
@@ -151,16 +174,14 @@ def generate_markdown(request: Request):
         list_started = time.perf_counter()
         object_names = storage_service.list_object_names_from_gs_uri(
             temp_output_prefix)
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="ocr_json_listed",
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
             object_count=len(object_names),
-            elapsed_ms=int((time.perf_counter() - list_started) * 1000),
+            elapsed_ms=_elapsed_ms(list_started),
             prefix=temp_output_prefix,
         )
 
@@ -173,16 +194,14 @@ def generate_markdown(request: Request):
         download_started = time.perf_counter()
         json_docs = storage_service.download_json_documents_from_gs_uri_prefix(
             temp_output_prefix)
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="ocr_json_downloaded",
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
             doc_count=len(json_docs),
-            elapsed_ms=int((time.perf_counter() - download_started) * 1000),
+            elapsed_ms=_elapsed_ms(download_started),
         )
 
         # 6) OCR JSON から下書き生成し、必要に応じて LLM で体裁を整える。
@@ -193,17 +212,15 @@ def generate_markdown(request: Request):
             llm_service=llm_service,
             enable_gemini_polish=settings.enable_gemini_polish,
         )
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="markdown_built",
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
             markdown_chars=len(markdown),
             stats=stats,
-            elapsed_ms=int((time.perf_counter() - markdown_started) * 1000),
+            elapsed_ms=_elapsed_ms(markdown_started),
         )
 
         # 7) 出力バケットへ Markdown を保存する。
@@ -215,16 +232,14 @@ def generate_markdown(request: Request):
             object_name=object_name,
             markdown=markdown,
         )
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="markdown_uploaded",
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
             output_uri=output_uri,
-            elapsed_ms=int((time.perf_counter() - upload_started) * 1000),
+            elapsed_ms=_elapsed_ms(upload_started),
         )
 
         # 8) 正常終了ステータスと成果物URI/統計を Firestore へ記録する。
@@ -238,10 +253,8 @@ def generate_markdown(request: Request):
                 "md_completed_at": job_store.now_iso(),
             },
         )
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="job_completed",
             request_id=request_id,
             job_id=job_id,
@@ -253,10 +266,8 @@ def generate_markdown(request: Request):
 
     except Exception as e:
         # 例外時はログへ詳細を残し、可能な限りジョブ状態を FAILED へ更新する。
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.ERROR,
-            event="generate_markdown",
             stage="failed",
             request_id=request_id,
             job_id=job_id,
@@ -277,10 +288,8 @@ def generate_markdown(request: Request):
                         "md_failed_at": job_store.now_iso(),
                     },
                 )
-                log_pipeline_event(
-                    logger,
+                _log_event(
                     level=logging.ERROR,
-                    event="generate_markdown",
                     stage="job_status_updated",
                     request_id=request_id,
                     job_id=job_id,
@@ -296,13 +305,11 @@ def generate_markdown(request: Request):
 
     finally:
         # 成否にかかわらず総処理時間を記録する。
-        log_pipeline_event(
-            logger,
+        _log_event(
             level=logging.INFO,
-            event="generate_markdown",
             stage="finished",
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
-            total_elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+            total_elapsed_ms=_elapsed_ms(started_at),
         )
