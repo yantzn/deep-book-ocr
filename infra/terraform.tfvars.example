@@ -23,6 +23,15 @@ documentai_processor_display_name = "deep-book-ocr-processor"
 
 gcp_location       = "us-central1"
 gemini_model_name  = "gemini-1.5-pro"
+enable_gemini_polish = true
+gemini_max_input_chars = 120000
+gemini_timeout_sec = 60
+gcs_download_timeout_sec = 30
+gcs_upload_timeout_sec = 30
+gcs_exists_timeout_sec = 10
+gcs_download_max_attempts = 3
+gcs_download_base_sleep_sec = 1
+md_firestore_timeout_sec = 20
 
 ############################################
 # Service Accounts (created in bootstrap)
@@ -80,6 +89,8 @@ md_generator_max_instance_request_concurrency = 1
 ############################################
 
 docai_submit_timeout_sec = 60
+ocr_firestore_timeout_sec = 20
+workflow_execute_timeout_sec = 20
 
 ############################################
 # Optional resources
