@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import importlib
 import logging
-from google.cloud import documentai_v1 as documentai
+
 from google.api_core.client_options import ClientOptions
+from google.cloud import documentai_v1 as documentai
 
 observability_module = importlib.import_module("ocr_trigger.observability")
 log_pipeline_event = observability_module.log_pipeline_event
@@ -10,17 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentAIService:
-
     def __init__(self, settings):
         # Processor location ごとの専用エンドポイントを使う。
         # 例: us-documentai.googleapis.com
         endpoint = f"{settings.processor_location}-documentai.googleapis.com"
-
         self.client = documentai.DocumentProcessorServiceClient(
             client_options=ClientOptions(api_endpoint=endpoint)
         )
-
         self.settings = settings
+
         log_pipeline_event(
             logger,
             level=logging.INFO,
@@ -31,11 +32,11 @@ class DocumentAIService:
             location=settings.processor_location,
         )
 
-    def submit_batch_process(self, bucket, name, output_prefix):
+    def submit_batch_process(self, bucket: str, name: str, output_prefix: str) -> str:
         # 入力PDFと出力先プレフィックスを DocAI batch 処理用の request に組み立てる。
         # ここでは submit のみを担当し、完了待ちは呼び出し側（Workflow）で行う。
-
         input_uri = f"gs://{bucket}/{name}"
+
         log_pipeline_event(
             logger,
             level=logging.INFO,
@@ -45,12 +46,14 @@ class DocumentAIService:
             output_prefix=output_prefix,
         )
 
+        processor_name = self.client.processor_path(
+            self.settings.gcp_project_id,
+            self.settings.processor_location,
+            self.settings.processor_id_normalized(),
+        )
+
         request = documentai.BatchProcessRequest(
-            name=self.client.processor_path(
-                self.settings.gcp_project_id,
-                self.settings.processor_location,
-                self.settings.processor_id,
-            ),
+            name=processor_name,
             input_documents=documentai.BatchDocumentsInputConfig(
                 gcs_documents=documentai.GcsDocuments(
                     documents=[
@@ -68,7 +71,8 @@ class DocumentAIService:
             ),
         )
 
-        operation = self.client.batch_process_documents(request)
+        operation = self.client.batch_process_documents(request=request)
+
         log_pipeline_event(
             logger,
             level=logging.INFO,
@@ -76,6 +80,7 @@ class DocumentAIService:
             stage="docai_submit_succeeded",
             input_uri=input_uri,
             operation_name=operation.operation.name,
+            processor_name=processor_name,
         )
 
         # 非同期LROの operation name を返して、後続が状態監視できるようにする。
