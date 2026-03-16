@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _setup_logging() -> None:
+    """ローカル実行と Cloud Run 実行の両方でロギングを初期化する。"""
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(level=level)
@@ -54,6 +55,7 @@ def _setup_logging() -> None:
 
 
 settings = get_settings()
+# サービスは import 時に 1 度だけ初期化し、リクエスト間でクライアントを再利用する。
 docai_service = DocumentAIService(settings)
 job_store = FirestoreJobStore(settings)
 workflow_service = WorkflowExecutionService(settings)
@@ -61,6 +63,8 @@ workflow_service = WorkflowExecutionService(settings)
 
 @functions_framework.cloud_event
 def start_ocr(event: CloudEvent):
+    """GCS オブジェクトイベントを受け取り、非同期 OCR と監視 Workflow を開始する。"""
+    # リクエスト単位の識別子と、全体処理時間計測用のタイマー。
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
 
@@ -75,12 +79,14 @@ def start_ocr(event: CloudEvent):
     )
 
     try:
+        # Cloud Storage イベントから必要フィールドを取り出して正規化する。
         data = event.data or {}
         bucket = str(data.get("bucket") or "").strip()
         name = str(data.get("name") or "").strip()
         generation = str(data.get("generation") or "").strip()
         metageneration = str(data.get("metageneration") or "").strip()
 
+        # オブジェクト位置が不足している不正イベントは早期に拒否する。
         if not bucket or not name:
             log_pipeline_event(
                 logger,
@@ -104,6 +110,7 @@ def start_ocr(event: CloudEvent):
             metageneration=metageneration,
         )
 
+        # PDF のみを処理対象とし、それ以外の拡張子は意図的にスキップする。
         if not name.lower().endswith(".pdf"):
             log_pipeline_event(
                 logger,
@@ -116,10 +123,12 @@ def start_ocr(event: CloudEvent):
             )
             return ("skipped: non-pdf", 200)
 
+        # 1) Document AI のバッチ OCR ジョブを送信する。
         submit_started = time.perf_counter()
         operation_name, output_uri = docai_service.start_ocr_batch_job(
             bucket, name)
 
+        # 2) 後続工程で追跡できるよう、Firestore にジョブ情報を作成/マージする。
         job_id = job_store.build_job_id(
             bucket=bucket, name=name, generation=generation)
 
@@ -153,11 +162,13 @@ def start_ocr(event: CloudEvent):
             output_prefix=output_uri,
         )
 
+        # 3) DocAI オペレーション完了まで監視する Workflow を開始する。
         workflow_execution_name = workflow_service.start_docai_monitor(
             job_id=job_id,
             operation_name=operation_name,
         )
 
+        # 4) 後続で実行を関連付けられるよう Workflow 実行情報を保存する。
         job_store.update_fields(
             job_id,
             {
@@ -182,6 +193,7 @@ def start_ocr(event: CloudEvent):
         return ("OK", 200)
 
     except Exception as e:  # noqa: BLE001
+        # 想定外エラーはリクエスト文脈付きで記録し、500 を返す。
         log_pipeline_event(
             logger,
             level=logging.ERROR,
@@ -195,6 +207,7 @@ def start_ocr(event: CloudEvent):
         return ("Internal Server Error", 500)
 
     finally:
+        # 成否に関わらず、必ず完了メトリクスを出力する。
         log_pipeline_event(
             logger,
             level=logging.INFO,
