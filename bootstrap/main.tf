@@ -216,6 +216,18 @@ resource "google_project_iam_member" "workflow_runner_sa_run_invoker" {
   member  = "serviceAccount:${google_service_account.workflow_runner_sa.email}"
 }
 
+resource "google_project_iam_member" "functions_runtime_sa_serviceusage_consumer" {
+  project = var.project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
+}
+
+resource "google_project_iam_member" "workflow_runner_sa_serviceusage_consumer" {
+  project = var.project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${google_service_account.workflow_runner_sa.email}"
+}
+
 #
 # 6. Workload Identity Federation
 #
