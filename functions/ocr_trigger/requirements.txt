@@ -56,6 +56,8 @@ google-cloud-core==2.5.0
     # via google-cloud-logging
 google-cloud-documentai==3.10.0
     # via -r requirements.in
+google-cloud-firestore>=2.16.0
+    # via -r requirements.in
 google-cloud-logging==3.13.0
     # via -r requirements.in
 google-cloud-storage==3.9.0
