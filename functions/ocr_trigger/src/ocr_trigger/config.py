@@ -60,6 +60,14 @@ class Settings(BaseSettings):
         default=120,
         alias="DOCAI_SUBMIT_TIMEOUT_SEC",
     )
+    firestore_timeout_sec: float = Field(
+        default=20.0,
+        alias="FIRESTORE_TIMEOUT_SEC",
+    )
+    workflow_execute_timeout_sec: float = Field(
+        default=20.0,
+        alias="WORKFLOW_EXECUTE_TIMEOUT_SEC",
+    )
 
     @property
     def is_gcp(self) -> bool:

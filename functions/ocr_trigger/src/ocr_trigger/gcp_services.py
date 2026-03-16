@@ -77,7 +77,10 @@ class DocumentAIService:
         )
 
         # 非同期の batch_process を起動（ここでは完了待ちしない）。
-        operation = self.client.batch_process_documents(request=request)
+        operation = self.client.batch_process_documents(
+            request=request,
+            timeout=self.settings.docai_submit_timeout_sec,
+        )
 
         log_pipeline_event(
             logger,

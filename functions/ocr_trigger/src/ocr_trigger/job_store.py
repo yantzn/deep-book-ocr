@@ -28,10 +28,18 @@ class FirestoreJobStore:
 
     def create_job(self, job_id: str, document: dict[str, Any], merge: bool = True) -> None:
         """ジョブドキュメントを作成/更新する（既定はマージ）。"""
-        self.collection.document(job_id).set(document, merge=merge)
+        self.collection.document(job_id).set(
+            document,
+            merge=merge,
+            timeout=self.settings.firestore_timeout_sec,
+        )
 
     def update_fields(self, job_id: str, fields: dict[str, Any]) -> None:
         """指定フィールドを部分更新し、更新時刻を自動付与する。"""
         payload = dict(fields)
         payload["updated_at"] = self.now_iso()
-        self.collection.document(job_id).set(payload, merge=True)
+        self.collection.document(job_id).set(
+            payload,
+            merge=True,
+            timeout=self.settings.firestore_timeout_sec,
+        )

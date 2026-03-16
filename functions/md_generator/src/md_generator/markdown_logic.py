@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
+
+
+class MarkdownPolisher(Protocol):
+    def polish_markdown(self, draft_markdown: str) -> str:
+        ...
 
 
 @dataclass
@@ -309,7 +313,7 @@ def _collect_blocks(json_docs: list[dict[str, Any]]) -> list[TextBlock]:
 
 def build_markdown_from_documentai_jsons(
     json_docs: list[dict[str, Any]],
-    llm_service: Any,
+    llm_service: MarkdownPolisher,
     enable_gemini_polish: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     # 1) JSON -> block 収集

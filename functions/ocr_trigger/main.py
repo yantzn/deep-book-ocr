@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -28,6 +29,14 @@ WorkflowExecutionService = workflow_service_module.WorkflowExecutionService
 log_pipeline_event = observability_module.log_pipeline_event
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ParsedStorageEvent:
+    bucket: str
+    name: str
+    generation: str
+    metageneration: str
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -77,6 +86,50 @@ def _setup_logging() -> None:
         )
 
 
+def _parse_storage_event(event: CloudEvent) -> ParsedStorageEvent | None:
+    """Cloud Storage イベントから必要項目を抽出し、欠損時は None を返す。"""
+    data = event.data or {}
+    bucket = str(data.get("bucket") or "").strip()
+    name = str(data.get("name") or "").strip()
+    generation = str(data.get("generation") or "").strip()
+    metageneration = str(data.get("metageneration") or "").strip()
+
+    if not bucket or not name:
+        return None
+
+    return ParsedStorageEvent(
+        bucket=bucket,
+        name=name,
+        generation=generation,
+        metageneration=metageneration,
+    )
+
+
+def _build_job_document(
+    *,
+    job_id: str,
+    request_id: str,
+    parsed: ParsedStorageEvent,
+    operation_name: str,
+    output_uri: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Firestore に保存する OCR ジョブ初期ドキュメントを構築する。"""
+    return {
+        "job_id": job_id,
+        "status": "DOC_AI_SUBMITTED",
+        "input_bucket": parsed.bucket,
+        "input_name": parsed.name,
+        "input_generation": parsed.generation,
+        "input_metageneration": parsed.metageneration,
+        "temp_output_prefix": output_uri,
+        "operation_name": operation_name,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "request_id": request_id,
+    }
+
+
 @lru_cache(maxsize=1)
 def _get_runtime_services() -> tuple[DocumentAIService, FirestoreJobStore, WorkflowExecutionService]:
     """実行時サービスを遅延初期化し、同一プロセス内で再利用する。"""
@@ -108,14 +161,10 @@ def start_ocr(event: CloudEvent):
         docai_service, job_store, workflow_service = _get_runtime_services()
 
         # Cloud Storage イベントから必要フィールドを取り出して正規化する。
-        data = event.data or {}
-        bucket = str(data.get("bucket") or "").strip()
-        name = str(data.get("name") or "").strip()
-        generation = str(data.get("generation") or "").strip()
-        metageneration = str(data.get("metageneration") or "").strip()
+        parsed = _parse_storage_event(event)
 
         # オブジェクト位置が不足している不正イベントは早期に拒否する。
-        if not bucket or not name:
+        if not parsed:
             _log_event(
                 level=logging.WARNING,
                 stage="event_rejected",
@@ -128,47 +177,47 @@ def start_ocr(event: CloudEvent):
             level=logging.INFO,
             stage="event_parsed",
             request_id=request_id,
-            bucket=bucket,
-            name=name,
-            generation=generation,
-            metageneration=metageneration,
+            bucket=parsed.bucket,
+            name=parsed.name,
+            generation=parsed.generation,
+            metageneration=parsed.metageneration,
         )
 
         # PDF のみを処理対象とし、それ以外の拡張子は意図的にスキップする。
-        if not name.lower().endswith(".pdf"):
+        if not parsed.name.lower().endswith(".pdf"):
             _log_event(
                 level=logging.INFO,
                 stage="skipped",
                 request_id=request_id,
                 reason="non_pdf_object",
-                name=name,
+                name=parsed.name,
             )
             return ("skipped: non-pdf", 200)
 
         # 1) Document AI のバッチ OCR ジョブを送信する。
         submit_started = time.perf_counter()
         operation_name, output_uri = docai_service.start_ocr_batch_job(
-            bucket, name)
+            parsed.bucket, parsed.name)
 
         # 2) 後続工程で追跡できるよう、Firestore にジョブ情報を作成/マージする。
         job_id = job_store.build_job_id(
-            bucket=bucket, name=name, generation=generation)
+            bucket=parsed.bucket,
+            name=parsed.name,
+            generation=parsed.generation,
+        )
+
+        now_iso = job_store.now_iso()
 
         job_store.create_job(
             job_id=job_id,
-            document={
-                "job_id": job_id,
-                "status": "DOC_AI_SUBMITTED",
-                "input_bucket": bucket,
-                "input_name": name,
-                "input_generation": generation,
-                "input_metageneration": metageneration,
-                "temp_output_prefix": output_uri,
-                "operation_name": operation_name,
-                "created_at": job_store.now_iso(),
-                "updated_at": job_store.now_iso(),
-                "request_id": request_id,
-            },
+            document=_build_job_document(
+                job_id=job_id,
+                request_id=request_id,
+                parsed=parsed,
+                operation_name=operation_name,
+                output_uri=output_uri,
+                now_iso=now_iso,
+            ),
             merge=True,
         )
 
@@ -177,7 +226,7 @@ def start_ocr(event: CloudEvent):
             stage="job_created",
             request_id=request_id,
             job_id=job_id,
-            input_uri=f"gs://{bucket}/{name}",
+            input_uri=f"gs://{parsed.bucket}/{parsed.name}",
             operation_name=operation_name,
             output_prefix=output_uri,
         )

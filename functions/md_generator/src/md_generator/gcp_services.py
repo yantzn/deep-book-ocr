@@ -26,6 +26,10 @@ def _parse_gs_uri(gs_uri: str) -> tuple[str, str]:
     parsed = urlparse(gs_uri)
     bucket = parsed.netloc
     prefix = parsed.path.lstrip("/")
+
+    if not bucket:
+        raise ValueError(f"Invalid gs:// URI (missing bucket): {gs_uri}")
+
     return bucket, prefix
 
 
@@ -68,8 +72,8 @@ class StorageService:
         bucket_name: str,
         object_name: str,
         *,
-        max_attempts: int = 3,
-        base_sleep_sec: float = 1.0,
+        max_attempts: int,
+        base_sleep_sec: float,
     ) -> str:
         """GCSテキストをリトライ付きで取得し、文字列として返す。"""
         bucket = self.client.bucket(bucket_name)
@@ -85,7 +89,10 @@ class StorageService:
                     max_attempts,
                 )
                 started = time.perf_counter()
-                raw = blob.download_as_text(encoding="utf-8")
+                raw = blob.download_as_text(
+                    encoding="utf-8",
+                    timeout=self.settings.gcs_download_timeout_sec,
+                )
                 logger.info(
                     "Downloaded object from GCS: bucket=%s object=%s chars=%d elapsed_ms=%d",
                     bucket_name,
@@ -160,6 +167,8 @@ class StorageService:
             raw = self._download_text_with_retry(
                 bucket_name=bucket_name,
                 object_name=object_name,
+                max_attempts=self.settings.gcs_download_max_attempts,
+                base_sleep_sec=self.settings.gcs_download_base_sleep_sec,
             )
             try:
                 docs.append(json.loads(raw))
@@ -191,6 +200,7 @@ class StorageService:
         blob.upload_from_string(
             markdown,
             content_type="text/markdown; charset=utf-8",
+            timeout=self.settings.gcs_upload_timeout_sec,
         )
         logger.info(
             "Uploaded markdown to GCS: bucket=%s object=%s elapsed_ms=%d",
@@ -203,17 +213,24 @@ class StorageService:
     def object_exists(self, bucket_name: str, object_name: str) -> bool:
         """指定オブジェクトの存在有無を返す。"""
         blob = self.client.bucket(bucket_name).blob(object_name)
-        return blob.exists()
+        return blob.exists(timeout=self.settings.gcs_exists_timeout_sec)
 
 
 class LLMService:
     def __init__(self, settings: Settings):
         """Vertex AI Gemini を使った Markdown 整形サービス。"""
         self.settings = settings
-        # Vertex AI 初期化はプロセス単位で一度行い、以後同モデルを再利用する。
-        vertexai_init(project=settings.gcp_project_id,
-                      location=settings.gcp_location)
-        self.model = GenerativeModel(settings.gemini_model_name)
+        self._model: GenerativeModel | None = None
+
+    def _get_model(self) -> GenerativeModel:
+        # Vertex AI 初期化は遅延実行し、初回利用時にのみ行う。
+        if self._model is None:
+            vertexai_init(
+                project=self.settings.gcp_project_id,
+                location=self.settings.gcp_location,
+            )
+            self._model = GenerativeModel(self.settings.gemini_model_name)
+        return self._model
 
     def polish_markdown(self, draft_markdown: str) -> str:
         """OCR下書きMarkdownを、意味を変えずに読みやすく整形する。"""
@@ -262,9 +279,16 @@ OUTPUT
 OCR TEXT:
 {draft_markdown[: self.settings.gemini_max_input_chars]}
 """
-        response = self.model.generate_content(prompt)
+        response = self._get_model().generate_content(
+            prompt,
+            request_options={"timeout": self.settings.gemini_timeout_sec},
+        )
         text = getattr(response, "text", "") or ""
-        return text.strip()
+        polished = text.strip()
+        if not polished:
+            logger.warning("Gemini returned empty text; using draft markdown")
+            return draft_markdown
+        return polished
 
 
 @dataclass(frozen=True)
