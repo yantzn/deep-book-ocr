@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class DocumentAIService:
     def __init__(self, settings):
+        """Document AI クライアントを初期化し、利用先設定を保持する。"""
         # Processor location ごとの専用エンドポイントを使う。
         # 例: us-documentai.googleapis.com
         endpoint = f"{settings.processor_location}-documentai.googleapis.com"
@@ -33,6 +34,7 @@ class DocumentAIService:
         )
 
     def submit_batch_process(self, bucket: str, name: str, output_prefix: str) -> str:
+        """DocAI バッチ処理を送信し、LRO の operation name を返す。"""
         # 入力PDFと出力先プレフィックスを DocAI batch 処理用の request に組み立てる。
         # ここでは submit のみを担当し、完了待ちは呼び出し側（Workflow）で行う。
         input_uri = f"gs://{bucket}/{name}"
@@ -52,6 +54,9 @@ class DocumentAIService:
             self.settings.processor_id_normalized(),
         )
 
+        # BatchProcessRequest を構築する。
+        # - input_documents: OCR対象PDF
+        # - document_output_config: JSON出力先GCSプレフィックス
         request = documentai.BatchProcessRequest(
             name=processor_name,
             input_documents=documentai.BatchDocumentsInputConfig(
@@ -71,6 +76,7 @@ class DocumentAIService:
             ),
         )
 
+        # 非同期の batch_process を起動（ここでは完了待ちしない）。
         operation = self.client.batch_process_documents(request=request)
 
         log_pipeline_event(
@@ -87,7 +93,9 @@ class DocumentAIService:
         return operation.operation.name
 
     def start_ocr_batch_job(self, bucket: str, name: str) -> tuple[str, str]:
+        """OCR起動ユースケース向けに、出力先決定と送信をまとめて実行する。"""
         # trigger 側のユースケース向けに、output_prefix 算出と submit をまとめる。
+        # 例: gs://<temp-bucket>/<input-name>_json/
         output_prefix = f"{self.settings.temp_bucket_uri()}{name}_json/"
         operation_name = self.submit_batch_process(
             bucket=bucket,

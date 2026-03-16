@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _setup_logging() -> None:
+    """実行環境に応じてロギングを初期化する。"""
     # 設定値からログレベルを決定し、ローカル/本番で初期化方法を切り替える。
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
@@ -53,6 +54,7 @@ def _setup_logging() -> None:
 
 @functions_framework.http
 def generate_markdown(request: Request):
+    """OCR結果JSONを集約し、Markdownを生成して保存する HTTP エントリポイント。"""
     # リクエスト単位の計測とログ相関IDを用意する。
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
@@ -62,6 +64,7 @@ def generate_markdown(request: Request):
     _setup_logging()
 
     # 設定・外部サービス依存を初期化する。
+    # NOTE: リクエストごとに依存を生成して、テスト差し替えや設定反映を容易にする。
     settings = get_settings()
     services = build_services(settings)
     storage_service = services.storage_service
@@ -79,6 +82,7 @@ def generate_markdown(request: Request):
 
     try:
         # 1) リクエストから job_id を取り出して入力検証する。
+        # Workflow からの呼び出しは JSON body: {"job_id": "..."} を想定。
         body = request.get_json(silent=True) or {}
         job_id = str(body.get("job_id") or "").strip()
 
@@ -105,6 +109,8 @@ def generate_markdown(request: Request):
             return ("job_id が必要です", 400)
 
         # 2) Firestore からジョブ定義を取得し、処理対象情報を確定する。
+        # temp_output_prefix: DocAI JSON 出力先
+        # input_name/input_generation: Markdown 出力オブジェクト名の構築に利用
         job = job_store.get_job(job_id)
         log_pipeline_event(
             logger,
@@ -141,6 +147,7 @@ def generate_markdown(request: Request):
         )
 
         # 4) DocAI 出力プレフィックス配下の JSON 一覧を取得する。
+        # 先に件数だけ確認し、0件なら即失敗にして原因追跡を容易にする。
         list_started = time.perf_counter()
         object_names = storage_service.list_object_names_from_gs_uri(
             temp_output_prefix)
@@ -162,6 +169,7 @@ def generate_markdown(request: Request):
                 f"No OCR JSON objects found under prefix: {temp_output_prefix}")
 
         # 5) JSON 群を読み込み、Markdown 生成用の入力データを準備する。
+        # DocAI のページ分割出力をまとめて取り込み、後段へ渡す。
         download_started = time.perf_counter()
         json_docs = storage_service.download_json_documents_from_gs_uri_prefix(
             temp_output_prefix)
@@ -178,6 +186,7 @@ def generate_markdown(request: Request):
         )
 
         # 6) OCR JSON から下書き生成し、必要に応じて LLM で体裁を整える。
+        # enable_gemini_polish が true の場合のみ、整形処理を有効化する。
         markdown_started = time.perf_counter()
         markdown, stats = build_markdown_from_documentai_jsons(
             json_docs=json_docs,
@@ -198,6 +207,7 @@ def generate_markdown(request: Request):
         )
 
         # 7) 出力バケットへ Markdown を保存する。
+        # 入力オブジェクト単位で追跡しやすいよう `<input_name>/<generation>.md` を採用。
         object_name = f"{input_name}/{input_generation}.md"
         upload_started = time.perf_counter()
         output_uri = storage_service.write_markdown(
@@ -218,6 +228,7 @@ def generate_markdown(request: Request):
         )
 
         # 8) 正常終了ステータスと成果物URI/統計を Firestore へ記録する。
+        # 以降の可視化・再実行判断で参照されるため、統計情報も保存する。
         job_store.update_fields(
             job_id,
             {
@@ -257,6 +268,7 @@ def generate_markdown(request: Request):
 
         try:
             if job_id:
+                # job_id が確定済みなら失敗情報を Firestore に反映する。
                 job_store.update_fields(
                     job_id,
                     {
@@ -276,6 +288,7 @@ def generate_markdown(request: Request):
                     status="MD_FAILED",
                 )
         except Exception:
+            # 失敗時の状態更新自体に失敗しても、元の 500 応答は維持する。
             logger.exception(
                 "[%s] Failed to update MD_FAILED status", request_id)
 
