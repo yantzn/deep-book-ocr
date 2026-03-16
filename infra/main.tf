@@ -12,11 +12,13 @@ resource "random_id" "bucket_suffix" {
 }
 
 locals {
-  suffix                          = random_id.bucket_suffix.hex
-  input_bucket_name               = "${var.project_id}-input-${local.suffix}"
-  temp_bucket_name                = "${var.project_id}-temp-${local.suffix}"
-  output_bucket_name              = "${var.project_id}-output-${local.suffix}"
-  source_bucket_name              = var.source_bucket_name != "" ? var.source_bucket_name : "${var.project_id}-source-${local.suffix}"
+  suffix = random_id.bucket_suffix.hex
+
+  input_bucket_name  = "${var.project_id}-input-${local.suffix}"
+  temp_bucket_name   = "${var.project_id}-temp-${local.suffix}"
+  output_bucket_name = "${var.project_id}-output-${local.suffix}"
+  source_bucket_name = var.source_bucket_name != "" ? var.source_bucket_name : "${var.project_id}-source-${local.suffix}"
+
   artifact_registry_repository_id = "gcf-artifacts"
 
   ocr_trigger_source_object  = "functions/${var.ocr_trigger_function_name}/function-source.zip"
@@ -41,8 +43,9 @@ resource "google_storage_bucket" "buckets" {
     source = local.source_bucket_name
   }
 
-  name                        = each.value
-  location                    = var.bucket_location
+  name     = each.value
+  location = var.bucket_location
+
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
   force_destroy               = false
@@ -99,7 +102,7 @@ data "archive_file" "ocr_trigger_placeholder_zip" {
 
   source {
     filename = "main.py"
-    content  = "def start_ocr(event):\n    return (\"placeholder\", 200)\n"
+    content  = "def start_ocr(event):\n return (\"placeholder\", 200)\n"
   }
 }
 
@@ -109,7 +112,7 @@ data "archive_file" "md_generator_placeholder_zip" {
 
   source {
     filename = "main.py"
-    content  = "def generate_markdown(request):\n    return (\"placeholder\", 200)\n"
+    content  = "def generate_markdown(request):\n return (\"placeholder\", 200)\n"
   }
 }
 
@@ -152,7 +155,7 @@ resource "google_storage_bucket_iam_member" "runtime_output_admin" {
 }
 
 #
-# IAM for workflow SA
+# IAM for workflow SA on buckets
 #
 resource "google_storage_bucket_iam_member" "workflow_temp_viewer" {
   bucket = google_storage_bucket.buckets["temp"].name
@@ -180,6 +183,52 @@ resource "google_storage_bucket_iam_member" "docai_temp_creator" {
   bucket = google_storage_bucket.buckets["temp"].name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${local.documentai_service_agent_email}"
+}
+
+#
+# Project IAM for runtime SA
+# - ocr_trigger: Document AI submit, Workflows execute, Firestore write
+# - md_generator: Firestore read/write, Vertex AI access
+#
+resource "google_project_iam_member" "runtime_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_workflows_invoker" {
+  project = var.project_id
+  role    = "roles/workflows.invoker"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_documentai_api_user" {
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = local.runtime_sa_member
+}
+
+resource "google_project_iam_member" "runtime_aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = local.runtime_sa_member
+}
+
+#
+# Project IAM for workflow SA
+# - Firestore patch
+# - Document AI operation polling
+#
+resource "google_project_iam_member" "workflow_firestore_user" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = local.workflow_sa_member
+}
+
+resource "google_project_iam_member" "workflow_documentai_api_user" {
+  project = var.project_id
+  role    = "roles/documentai.apiUser"
+  member  = local.workflow_sa_member
 }
 
 #
@@ -227,7 +276,9 @@ resource "google_cloudfunctions2_function" "md_generator" {
     google_project_service.required,
     google_storage_bucket_iam_member.runtime_temp_viewer,
     google_storage_bucket_iam_member.runtime_output_admin,
-    google_storage_bucket_object.md_generator_source
+    google_project_iam_member.runtime_firestore_user,
+    google_project_iam_member.runtime_aiplatform_user,
+    google_storage_bucket_object.md_generator_source,
   ]
 
   lifecycle {
@@ -293,8 +344,10 @@ resource "google_workflows_workflow" "docai_monitor" {
   depends_on = [
     google_project_service.required,
     google_project_service_identity.workflows_service_agent,
+    google_project_iam_member.workflow_firestore_user,
+    google_project_iam_member.workflow_documentai_api_user,
     google_cloudfunctions2_function.md_generator,
-    google_cloud_run_service_iam_member.workflow_md_generator_run_invoker
+    google_cloud_run_service_iam_member.workflow_md_generator_run_invoker,
   ]
 }
 
@@ -368,8 +421,11 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     google_storage_bucket_iam_member.runtime_input_viewer,
     google_storage_bucket_iam_member.docai_input_viewer,
     google_storage_bucket_iam_member.docai_temp_creator,
+    google_project_iam_member.runtime_firestore_user,
+    google_project_iam_member.runtime_workflows_invoker,
+    google_project_iam_member.runtime_documentai_api_user,
     google_storage_bucket_object.ocr_trigger_source,
-    google_workflows_workflow.docai_monitor
+    google_workflows_workflow.docai_monitor,
   ]
 
   lifecycle {
