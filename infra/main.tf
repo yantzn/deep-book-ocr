@@ -238,9 +238,8 @@ resource "google_cloudfunctions2_function" "md_generator" {
 
     source {
       storage_source {
-        bucket     = google_storage_bucket.buckets["source"].name
-        object     = google_storage_bucket_object.md_generator_source.name
-        generation = google_storage_bucket_object.md_generator_source.generation
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.md_generator_source.name
       }
     }
   }
@@ -379,9 +378,8 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
 
     source {
       storage_source {
-        bucket     = google_storage_bucket.buckets["source"].name
-        object     = google_storage_bucket_object.ocr_trigger_source.name
-        generation = google_storage_bucket_object.ocr_trigger_source.generation
+        bucket = google_storage_bucket.buckets["source"].name
+        object = google_storage_bucket_object.ocr_trigger_source.name
       }
     }
   }
