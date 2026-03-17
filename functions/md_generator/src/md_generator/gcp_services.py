@@ -135,6 +135,7 @@ class LLMService:
 
     @dataclass(frozen=True)
     class _GeminiResponse:
+        # Gemini API応答から、後段の観測ログで使う値のみ抽出した中間表現。
         text: str
         latency_ms: int
         prompt_tokens: int | None
@@ -142,6 +143,7 @@ class LLMService:
         total_tokens: int | None
 
     def _generate_via_gemini_api(self, prompt: str) -> _GeminiResponse:
+        """Gemini APIへ1回リクエストし、本文と使用量メタデータを返す。"""
         if not self.settings.gemini_api_key.strip():
             logger.warning("GEMINI_API_KEY is not set; using draft markdown")
             return self._GeminiResponse(
@@ -214,6 +216,7 @@ class LLMService:
         )
 
     def _split_markdown_chunks(self, markdown: str) -> list[str]:
+        """Markdownを段落優先で分割し、チャンク上限文字数内へ収める。"""
         max_chars = max(1, int(self.settings.gemini_max_input_chars))
         paragraphs = markdown.split("\n\n")
 
@@ -238,6 +241,7 @@ class LLMService:
             next_len = current_chars + separator + para_len
 
             if next_len <= max_chars:
+                # 現在のチャンクに段落を追加できる場合はそのまま積む。
                 current_parts.append(para)
                 current_chars = next_len
                 continue
@@ -245,10 +249,12 @@ class LLMService:
             flush_current()
 
             if para_len <= max_chars:
+                # 現在チャンクを確定後、段落を次チャンクの先頭として採用する。
                 current_parts.append(para)
                 current_chars = para_len
                 continue
 
+            # 単一段落が上限超過するケースのみ、段落内で強制スライスする。
             for i in range(0, para_len, max_chars):
                 piece = para[i:i + max_chars].strip()
                 if piece:
@@ -258,6 +264,8 @@ class LLMService:
         return chunks or [markdown[:max_chars]]
 
     def polish_markdown(self, draft_markdown: str) -> str:
+        """下書きMarkdownをチャンク単位でGemini整形し、結合して返す。"""
+        # 長文タイムアウト回避のため、まず入力をチャンクへ分割する。
         chunks = self._split_markdown_chunks(draft_markdown)
         chunk_outputs: list[str] = []
         failures = 0
@@ -320,10 +328,12 @@ OCR TEXT:
                 response_tokens = result.response_tokens
                 total_tokens = result.total_tokens
                 if not polished_chunk:
+                    # 空応答は失敗扱いにし、元チャンクを採用して欠落を防ぐ。
                     chunk_failed = True
                     failures += 1
                     polished_chunk = chunk
             except RuntimeError as e:
+                # APIエラー時も同様にフォールバックし、パイプラインを継続する。
                 chunk_failed = True
                 failures += 1
                 polished_chunk = chunk
@@ -335,6 +345,7 @@ OCR TEXT:
                 )
 
             fail_rate = failures / chunk_index
+            # チャンク粒度で遅延・トークン・失敗率を記録し、運用で調整可能にする。
             log_pipeline_event(
                 logger,
                 level=logging.INFO,
@@ -353,8 +364,10 @@ OCR TEXT:
             )
             chunk_outputs.append(polished_chunk)
 
+        # チャンク順に再結合し、文書全体の最終Markdownを組み立てる。
         combined = "\n\n".join(part.strip()
                                for part in chunk_outputs if part.strip()).strip()
+        # 最終サマリを1件出力し、処理全体の成功率を追跡しやすくする。
         log_pipeline_event(
             logger,
             level=logging.INFO,
