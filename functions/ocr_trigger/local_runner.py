@@ -50,6 +50,9 @@ def _bootstrap_env() -> None:
         "PROCESSOR_LOCATION",
         "PROCESSOR_ID",
         "TEMP_BUCKET",
+        "FIRESTORE_JOBS_COLLECTION",
+        "DOCAI_MONITOR_WORKFLOW_NAME",
+        "WORKFLOW_REGION",
         # ローカル実行用の入力指定
         "LOCAL_INPUT_BUCKET",
         "LOCAL_INPUT_OBJECT",

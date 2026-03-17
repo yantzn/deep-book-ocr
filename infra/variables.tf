@@ -27,12 +27,6 @@ variable "documentai_location" {
   default     = "us"
 }
 
-variable "gcp_location" {
-  description = "Vertex AI / Gemini location"
-  type        = string
-  default     = "us-central1"
-}
-
 variable "documentai_processor_display_name" {
   description = "Display name for Document AI processor"
   type        = string
@@ -165,7 +159,13 @@ variable "workflow_execute_timeout_sec" {
 variable "gemini_model_name" {
   description = "Gemini model name for markdown polishing"
   type        = string
-  default     = "gemini-1.5-pro"
+  default     = "gemini-2.5-flash"
+}
+
+variable "gemini_api_secret_id" {
+  description = "Secret Manager secret id for md-generator Gemini API key"
+  type        = string
+  default     = "gemini-api-key"
 }
 
 variable "enable_gemini_polish" {

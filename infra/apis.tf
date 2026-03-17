@@ -1,7 +1,6 @@
 locals {
   required_apis = [
     "artifactregistry.googleapis.com",
-    "aiplatform.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
     "eventarc.googleapis.com",
@@ -10,6 +9,7 @@ locals {
     "iam.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
+    "secretmanager.googleapis.com",
     "storage.googleapis.com",
     "workflowexecutions.googleapis.com",
     "workflows.googleapis.com",

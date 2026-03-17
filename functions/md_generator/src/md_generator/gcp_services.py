@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+import requests
 from google.api_core.exceptions import Forbidden, GoogleAPICallError, NotFound
 from google.cloud import storage
-from vertexai import init as vertexai_init
-from vertexai.generative_models import GenerativeModel
 
 from .config import Settings
 
@@ -131,16 +130,61 @@ class StorageService:
 class LLMService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._model: GenerativeModel | None = None
+        self._session = requests.Session()
 
-    def _get_model(self) -> GenerativeModel:
-        if self._model is None:
-            vertexai_init(
-                project=self.settings.gcp_project_id,
-                location=self.settings.gcp_location,
+    def _generate_via_gemini_api(self, prompt: str) -> str:
+        if not self.settings.gemini_api_key.strip():
+            logger.warning("GEMINI_API_KEY is not set; using draft markdown")
+            return ""
+
+        endpoint = (
+            f"{self.settings.gemini_api_base_url.rstrip('/')}"
+            f"/models/{self.settings.gemini_model_name}:generateContent"
+        )
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+            },
+        }
+
+        try:
+            response = self._session.post(
+                endpoint,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.settings.gemini_api_key,
+                },
+                json=payload,
+                timeout=self.settings.gemini_timeout_sec,
             )
-            self._model = GenerativeModel(self.settings.gemini_model_name)
-        return self._model
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            body = ""
+            if e.response is not None:
+                body = e.response.text[:500]
+            raise RuntimeError(
+                f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} body={body}"
+            ) from e
+        except requests.RequestException as e:
+            raise RuntimeError(f"Gemini API request failed: {e!r}") from e
+
+        data = response.json()
+        candidates = data.get("candidates") or []
+        texts: list[str] = []
+        for candidate in candidates:
+            content = candidate.get("content") or {}
+            for part in content.get("parts") or []:
+                text = part.get("text")
+                if text:
+                    texts.append(text)
+
+        return "\n".join(texts).strip()
 
     def polish_markdown(self, draft_markdown: str) -> str:
         prompt = f"""
@@ -186,12 +230,7 @@ OUTPUT
 OCR TEXT:
 {draft_markdown[: self.settings.gemini_max_input_chars]}
 """
-        response = self._get_model().generate_content(
-            prompt,
-            request_options={"timeout": self.settings.gemini_timeout_sec},
-        )
-        text = getattr(response, "text", "") or ""
-        polished = text.strip()
+        polished = self._generate_via_gemini_api(prompt)
         if not polished:
             logger.warning("Gemini returned empty text; using draft markdown")
             return draft_markdown

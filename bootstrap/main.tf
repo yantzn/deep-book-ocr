@@ -136,6 +136,12 @@ resource "google_project_iam_member" "github_sa_serviceusage_admin" {
   member  = "serviceAccount:${google_service_account.github_sa.email}"
 }
 
+resource "google_project_iam_member" "github_sa_secretmanager_admin" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${google_service_account.github_sa.email}"
+}
+
 resource "google_project_iam_member" "github_sa_iam_service_account_user" {
   project = var.project_id
   # デプロイ時に target SA を指定して Cloud Functions / Run を作成するために必要。
@@ -186,13 +192,6 @@ resource "google_project_iam_member" "functions_runtime_sa_workflows_invoker" {
   project = var.project_id
   role    = "roles/workflows.invoker"
   member  = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
-}
-
-resource "google_project_iam_member" "functions_runtime_sa_aiplatform_user" {
-  project = var.project_id
-  # Gemini 呼び出し（aiplatform.endpoints.predict）に必要。
-  role   = "roles/aiplatform.user"
-  member = "serviceAccount:${google_service_account.functions_runtime_sa.email}"
 }
 
 #

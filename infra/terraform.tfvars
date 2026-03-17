@@ -4,7 +4,6 @@ bucket_location            = "asia-northeast1"
 artifact_registry_location = "asia-northeast1"
 
 documentai_location               = "us"
-gcp_location                      = "us-central1"
 documentai_processor_display_name = "deep-book-ocr-processor"
 
 github_actions_service_account_email    = "github-actions-sa-0488@deep-book-ocr.iam.gserviceaccount.com"
@@ -33,6 +32,6 @@ ocr_trigger_max_instance_request_concurrency  = 1
 md_generator_max_instance_request_concurrency = 1
 
 docai_submit_timeout_sec = 60
-gemini_model_name        = "gemini-1.5-pro"
+gemini_model_name        = "gemini-2.5-flash"
 
 create_firestore_database = false

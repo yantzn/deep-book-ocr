@@ -94,42 +94,54 @@ resource "google_document_ai_processor" "ocr" {
   depends_on = [google_project_service.required]
 }
 
-# Cloud Functions 初回作成時に参照される最小 ZIP を Terraform 側で生成する。
-# 実運用では CI/CD が同じ object 名へ本番コード ZIP を上書きする。
-data "archive_file" "ocr_trigger_placeholder_zip" {
+#
+# Source archives and objects (functions ディレクトリから毎回生成)
+#
+data "archive_file" "ocr_trigger_source_zip" {
   type        = "zip"
-  output_path = "${path.module}/.terraform/ocr-trigger-placeholder.zip"
+  source_dir  = "${path.module}/../functions/ocr_trigger"
+  output_path = "${path.module}/.terraform/ocr-trigger-source.zip"
 
-  source {
-    filename = "main.py"
-    content  = "def start_ocr(event):\n return (\"placeholder\", 200)\n"
-  }
+  excludes = [
+    ".env",
+    ".venv/**",
+    "__pycache__/**",
+    "tests/**",
+    ".pytest_cache/**",
+    ".mypy_cache/**",
+    ".ruff_cache/**",
+    "*.pyc",
+  ]
 }
 
-data "archive_file" "md_generator_placeholder_zip" {
+data "archive_file" "md_generator_source_zip" {
   type        = "zip"
-  output_path = "${path.module}/.terraform/md-generator-placeholder.zip"
+  source_dir  = "${path.module}/../functions/md_generator"
+  output_path = "${path.module}/.terraform/md-generator-source.zip"
 
-  source {
-    filename = "main.py"
-    content  = "def generate_markdown(request):\n return (\"placeholder\", 200)\n"
-  }
+  excludes = [
+    ".env",
+    ".venv/**",
+    "__pycache__/**",
+    "tests/**",
+    ".pytest_cache/**",
+    ".mypy_cache/**",
+    ".ruff_cache/**",
+    "*.pyc",
+  ]
 }
 
-#
-# Source objects (dummy placeholders; actual code replaced by CI/CD)
-#
 resource "google_storage_bucket_object" "ocr_trigger_source" {
   name         = local.ocr_trigger_source_object
   bucket       = google_storage_bucket.buckets["source"].name
-  source       = data.archive_file.ocr_trigger_placeholder_zip.output_path
+  source       = data.archive_file.ocr_trigger_source_zip.output_path
   content_type = "application/zip"
 }
 
 resource "google_storage_bucket_object" "md_generator_source" {
   name         = local.md_generator_source_object
   bucket       = google_storage_bucket.buckets["source"].name
-  source       = data.archive_file.md_generator_placeholder_zip.output_path
+  source       = data.archive_file.md_generator_source_zip.output_path
   content_type = "application/zip"
 }
 
@@ -152,6 +164,15 @@ resource "google_storage_bucket_iam_member" "runtime_output_admin" {
   bucket = google_storage_bucket.buckets["output"].name
   role   = "roles/storage.objectAdmin"
   member = local.runtime_sa_member
+}
+
+resource "google_secret_manager_secret_iam_member" "runtime_gemini_api_key_accessor" {
+  project   = var.project_id
+  secret_id = var.gemini_api_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.runtime_sa_member
+
+  depends_on = [google_project_service.required]
 }
 
 #
@@ -199,8 +220,9 @@ resource "google_cloudfunctions2_function" "md_generator" {
 
     source {
       storage_source {
-        bucket = google_storage_bucket.buckets["source"].name
-        object = google_storage_bucket_object.md_generator_source.name
+        bucket     = google_storage_bucket.buckets["source"].name
+        object     = google_storage_bucket_object.md_generator_source.name
+        generation = google_storage_bucket_object.md_generator_source.generation
       }
     }
   }
@@ -217,7 +239,6 @@ resource "google_cloudfunctions2_function" "md_generator" {
     environment_variables = {
       APP_ENV                     = "gcp"
       GCP_PROJECT_ID              = var.project_id
-      GCP_LOCATION                = var.gcp_location
       TEMP_BUCKET                 = google_storage_bucket.buckets["temp"].name
       OUTPUT_BUCKET               = google_storage_bucket.buckets["output"].name
       FIRESTORE_JOBS_COLLECTION   = var.firestore_jobs_collection
@@ -233,10 +254,18 @@ resource "google_cloudfunctions2_function" "md_generator" {
       FIRESTORE_TIMEOUT_SEC       = tostring(var.md_firestore_timeout_sec)
       LOG_EXECUTION_ID            = "true"
     }
+
+    secret_environment_variables {
+      key        = "GEMINI_API_KEY"
+      project_id = var.project_id
+      secret     = var.gemini_api_secret_id
+      version    = "latest"
+    }
   }
 
   depends_on = [
     google_project_service.required,
+    google_secret_manager_secret_iam_member.runtime_gemini_api_key_accessor,
     google_storage_bucket_iam_member.runtime_temp_viewer,
     google_storage_bucket_iam_member.runtime_output_admin,
     google_storage_bucket_object.md_generator_source,
@@ -244,10 +273,6 @@ resource "google_cloudfunctions2_function" "md_generator" {
 
   lifecycle {
     replace_triggered_by = [terraform_data.md_generator_http_migration]
-
-    ignore_changes = [
-      build_config[0].source[0].storage_source[0].generation,
-    ]
   }
 }
 
@@ -329,8 +354,9 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
 
     source {
       storage_source {
-        bucket = google_storage_bucket.buckets["source"].name
-        object = google_storage_bucket_object.ocr_trigger_source.name
+        bucket     = google_storage_bucket.buckets["source"].name
+        object     = google_storage_bucket_object.ocr_trigger_source.name
+        generation = google_storage_bucket_object.ocr_trigger_source.generation
       }
     }
   }
@@ -347,7 +373,6 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     environment_variables = {
       APP_ENV                      = "gcp"
       GCP_PROJECT_ID               = var.project_id
-      GCP_LOCATION                 = var.gcp_location
       PROCESSOR_ID                 = google_document_ai_processor.ocr.name
       PROCESSOR_LOCATION           = var.documentai_location
       INPUT_BUCKET                 = google_storage_bucket.buckets["input"].name
@@ -385,10 +410,4 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     google_storage_bucket_object.ocr_trigger_source,
     google_workflows_workflow.docai_monitor,
   ]
-
-  lifecycle {
-    ignore_changes = [
-      build_config[0].source[0].storage_source[0].generation,
-    ]
-  }
 }

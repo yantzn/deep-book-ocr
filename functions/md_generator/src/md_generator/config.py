@@ -19,7 +19,6 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="local", alias="APP_ENV")
     gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
-    gcp_location: str = Field(default="asia-northeast1", alias="GCP_LOCATION")
 
     temp_bucket: str = Field(..., alias="TEMP_BUCKET")
     output_bucket: str = Field(..., alias="OUTPUT_BUCKET")
@@ -27,8 +26,13 @@ class Settings(BaseSettings):
                                            alias="FIRESTORE_JOBS_COLLECTION")
 
     gemini_model_name: str = Field(
-        default="gemini-1.5-pro",
+        ...,
         alias="GEMINI_MODEL_NAME",
+    )
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    gemini_api_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta",
+        alias="GEMINI_API_BASE_URL",
     )
     enable_gemini_polish: bool = Field(
         default=True,

@@ -18,11 +18,12 @@ documentai_location = "us"
 documentai_processor_display_name = "deep-book-ocr-processor"
 
 ############################################
-# Vertex AI / Gemini configuration
+# Gemini API configuration
 ############################################
 
-gcp_location       = "us-central1"
-gemini_model_name  = "gemini-1.5-pro"
+gemini_model_name  = "gemini-2.5-flash"
+# Secret Manager に保存する secret id
+gemini_api_secret_id = "gemini-api-key"
 enable_gemini_polish = true
 gemini_max_input_chars = 120000
 gemini_timeout_sec = 60
