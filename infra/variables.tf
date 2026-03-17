@@ -27,12 +27,6 @@ variable "documentai_location" {
   default     = "us"
 }
 
-variable "gcp_location" {
-  description = "Vertex AI / Gemini location"
-  type        = string
-  default     = "us-central1"
-}
-
 variable "documentai_processor_display_name" {
   description = "Display name for Document AI processor"
   type        = string
@@ -166,6 +160,13 @@ variable "gemini_model_name" {
   description = "Gemini model name for markdown polishing"
   type        = string
   default     = "gemini-2.5-flash"
+}
+
+variable "gemini_api_key" {
+  description = "Gemini API key for md-generator"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "enable_gemini_polish" {

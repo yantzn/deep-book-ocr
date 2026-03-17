@@ -29,10 +29,9 @@ class Settings(BaseSettings):
     # local | gcp
     app_env: str = Field(default="local", alias="APP_ENV")
 
-    # プロジェクト/リージョンなど GCP 基本設定。
+    # プロジェクトなど GCP 基本設定。
     # GCP project
     gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
-    gcp_location: str = Field(..., alias="GCP_LOCATION")
 
     # 利用する Document AI プロセッサ設定。
     # Document AI processor

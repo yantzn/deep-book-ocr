@@ -47,7 +47,6 @@ def _bootstrap_env() -> None:
     required_keys = [
         "APP_ENV",
         "GCP_PROJECT_ID",
-        "GCP_LOCATION",
         "PROCESSOR_LOCATION",
         "PROCESSOR_ID",
         "TEMP_BUCKET",

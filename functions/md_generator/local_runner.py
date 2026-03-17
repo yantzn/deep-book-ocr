@@ -32,7 +32,6 @@ def _bootstrap_env() -> None:
     required = [
         "APP_ENV",
         "GCP_PROJECT_ID",
-        "GCP_LOCATION",
         "OUTPUT_BUCKET",
         "GEMINI_MODEL_NAME",
         "LOCAL_JOB_ID",

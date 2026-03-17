@@ -19,6 +19,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,4 +60,5 @@ jobs:
             --runtime=python310 \
             --source=functions/md_generator \
             --entry-point=generate_markdown \
+            --update-env-vars="GEMINI_API_KEY=${GEMINI_API_KEY}" \
             --quiet
