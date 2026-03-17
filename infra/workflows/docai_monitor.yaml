@@ -123,12 +123,15 @@ main:
 
     - normalizeJobAfterMd:
         assign:
-          - job_fields: $${default(map.get(job_doc, "fields"), {})}
+          - job_fields: $${map.get(job_doc, "fields")}
+          - status_field: $${if(job_fields == null, null, map.get(job_fields, "status"))}
+          - input_bucket_field: $${if(job_fields == null, null, map.get(job_fields, "input_bucket"))}
+          - input_name_field: $${if(job_fields == null, null, map.get(job_fields, "input_name"))}
           # md-generator 側が最終的に MD_SUCCEEDED / MD_FAILED を設定
-          - md_status: $${default(map.get(default(map.get(job_fields, "status"), {}), "stringValue"), "")}
+          - md_status: $${default(map.get(status_field, "stringValue"), "")}
           # 削除対象（入力PDF）の場所
-          - input_bucket: $${default(map.get(default(map.get(job_fields, "input_bucket"), {}), "stringValue"), "")}
-          - input_name: $${default(map.get(default(map.get(job_fields, "input_name"), {}), "stringValue"), "")}
+          - input_bucket: $${default(map.get(input_bucket_field, "stringValue"), "")}
+          - input_name: $${default(map.get(input_name_field, "stringValue"), "")}
           # DocAI JSON の保存先プレフィックス（ocr-trigger の命名規約に合わせる）
           - temp_json_prefix: $${input_name + "_json/"}
 
