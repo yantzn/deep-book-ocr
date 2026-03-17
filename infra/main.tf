@@ -264,6 +264,8 @@ resource "google_cloudfunctions2_function" "md_generator" {
       ENABLE_GEMINI_POLISH        = tostring(var.enable_gemini_polish)
       GEMINI_MAX_INPUT_CHARS      = tostring(var.gemini_max_input_chars)
       GEMINI_TIMEOUT_SEC          = tostring(var.gemini_timeout_sec)
+      GEMINI_CONNECT_TIMEOUT_SEC  = tostring(var.gemini_connect_timeout_sec)
+      GEMINI_READ_TIMEOUT_SEC     = tostring(var.gemini_read_timeout_sec)
       GEMINI_REQUEST_MAX_ATTEMPTS = tostring(var.gemini_request_max_attempts)
       GEMINI_RETRY_BASE_SLEEP_SEC = tostring(var.gemini_retry_base_sleep_sec)
       GCS_DOWNLOAD_TIMEOUT_SEC    = tostring(var.gcs_download_timeout_sec)

@@ -17,7 +17,6 @@ main:
           # 10秒間隔 x 120回 = 最大20分待機
           - md_poll_count: 0
           - md_poll_max: 120
-          - trigger_failed: false
 
     - markRunning:
       # DocAIのLRO監視に入る前にジョブ状態を実行中へ更新
@@ -94,6 +93,7 @@ main:
           call: http.post
           args:
             url: $${md_generator_url}
+            timeout: 30
             auth:
               type: OIDC
               audience: $${md_generator_audience}
@@ -101,13 +101,10 @@ main:
               Content-Type: "application/json"
             body:
               job_id: $${job_id}
-          result: md_response
+          next: markMdTriggered
         except:
           as: trigger_error
           steps:
-            - setTriggerFailed:
-                assign:
-                  - trigger_failed: true
             - recordMdTriggerHttpError:
                 call: googleapis.firestore.v1.projects.databases.documents.patch
                 args:
@@ -118,14 +115,8 @@ main:
                     fields:
                       last_error:
                         stringValue: $${json.encode_to_string(trigger_error)}
-        next: checkTriggerResult
-
-    - checkTriggerResult:
-      # HTTPエラー時はステータス上書きせず、実ジョブ状態をポーリングで確認する。
-        switch:
-          - condition: $${trigger_failed}
-            next: getJobAfterMd
-        next: markMdTriggered
+            - continueToPolling:
+                next: getJobAfterMd
 
     - markMdTriggered:
       # 発火済みステータスを保存（運用時の可視化用）
@@ -188,11 +179,27 @@ main:
 
     - deleteInputObject:
       # Markdown作成後に入力PDFを削除
-        call: googleapis.storage.v1.objects.delete
-        args:
-          bucket: $${input_bucket}
-          object: $${input_name}
-        next: listTempJsonObjects
+        try:
+          call: googleapis.storage.v1.objects.delete
+          args:
+            bucket: $${input_bucket}
+            object: $${input_name}
+          next: listTempJsonObjects
+        except:
+          as: input_delete_error
+          steps:
+            - recordInputDeleteError:
+                call: googleapis.firestore.v1.projects.databases.documents.patch
+                args:
+                  name: $${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+                  updateMask:
+                    fieldPaths: ["last_error"]
+                  body:
+                    fields:
+                      last_error:
+                        stringValue: $${json.encode_to_string(input_delete_error)}
+            - continueAfterInputDeleteError:
+                next: listTempJsonObjects
 
     - listTempJsonObjects:
       # DocAI出力JSONを prefix 一覧取得して順次削除
@@ -210,10 +217,24 @@ main:
           steps:
             - deleteTempJsonObject:
                 # temp配下の各JSONオブジェクトを削除
-                call: googleapis.storage.v1.objects.delete
-                args:
-                  bucket: $${temp_bucket_name}
-                  object: $${item.name}
+                try:
+                  call: googleapis.storage.v1.objects.delete
+                  args:
+                    bucket: $${temp_bucket_name}
+                    object: $${item.name}
+                except:
+                  as: temp_delete_error
+                  steps:
+                    - recordTempDeleteError:
+                        call: googleapis.firestore.v1.projects.databases.documents.patch
+                        args:
+                          name: $${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+                          updateMask:
+                            fieldPaths: ["last_error"]
+                          body:
+                            fields:
+                              last_error:
+                                stringValue: $${json.encode_to_string(temp_delete_error)}
         next: finishOk
 
     - finishFailed:

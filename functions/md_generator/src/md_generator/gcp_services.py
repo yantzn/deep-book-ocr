@@ -173,6 +173,10 @@ class LLMService:
         max_attempts = max(1, int(self.settings.gemini_request_max_attempts))
         base_sleep_sec = max(0.0, float(
             self.settings.gemini_retry_base_sleep_sec))
+        connect_timeout_sec = max(
+            0.1, float(self.settings.gemini_connect_timeout_sec))
+        read_timeout_sec = max(0.1, float(
+            self.settings.gemini_read_timeout_sec))
         started = time.perf_counter()
         response: requests.Response | None = None
         last_error: Exception | None = None
@@ -186,7 +190,7 @@ class LLMService:
                         "x-goog-api-key": self.settings.gemini_api_key,
                     },
                     json=payload,
-                    timeout=self.settings.gemini_timeout_sec,
+                    timeout=(connect_timeout_sec, read_timeout_sec),
                 )
                 response.raise_for_status()
                 last_error = None
