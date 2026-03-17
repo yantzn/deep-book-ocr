@@ -14,6 +14,7 @@ resource "random_id" "bucket_suffix" {
 locals {
   suffix = random_id.bucket_suffix.hex
 
+  # 環境ごとに衝突しない一意なバケット名を生成する。
   input_bucket_name  = "${var.project_id}-input-${local.suffix}"
   temp_bucket_name   = "${var.project_id}-temp-${local.suffix}"
   output_bucket_name = "${var.project_id}-output-${local.suffix}"
@@ -36,6 +37,7 @@ locals {
 # Buckets
 #
 resource "google_storage_bucket" "buckets" {
+  # input/temp/output/source を同一定義でまとめて作成する。
   for_each = {
     input  = local.input_bucket_name
     temp   = local.temp_bucket_name
@@ -179,8 +181,23 @@ resource "google_secret_manager_secret_iam_member" "runtime_gemini_api_key_acces
 # IAM for workflow SA on buckets
 #
 resource "google_storage_bucket_iam_member" "workflow_temp_viewer" {
+  # Workflow が temp 配下の JSON 一覧を取得するための参照権限。
   bucket = google_storage_bucket.buckets["temp"].name
   role   = "roles/storage.objectViewer"
+  member = local.workflow_sa_member
+}
+
+resource "google_storage_bucket_iam_member" "workflow_temp_object_user" {
+  # Workflow が temp 配下 JSON を削除するための更新権限。
+  bucket = google_storage_bucket.buckets["temp"].name
+  role   = "roles/storage.objectUser"
+  member = local.workflow_sa_member
+}
+
+resource "google_storage_bucket_iam_member" "workflow_input_object_user" {
+  # Workflow が入力PDFを削除するための更新権限。
+  bucket = google_storage_bucket.buckets["input"].name
+  role   = "roles/storage.objectUser"
   member = local.workflow_sa_member
 }
 
@@ -210,6 +227,7 @@ resource "google_storage_bucket_iam_member" "docai_temp_creator" {
 # Markdown generator function
 #
 resource "google_cloudfunctions2_function" "md_generator" {
+  # DocAI JSON を集約して Markdown を生成する HTTP Function。
   name     = var.md_generator_function_name
   location = var.region
 
@@ -237,6 +255,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
     service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
+      # 生成処理・GCS I/O・Firestore の挙動を環境変数で制御する。
       APP_ENV                     = "gcp"
       GCP_PROJECT_ID              = var.project_id
       TEMP_BUCKET                 = google_storage_bucket.buckets["temp"].name
@@ -256,6 +275,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
     }
 
     secret_environment_variables {
+      # Gemini API キーは平文envではなく Secret Manager から注入する。
       key        = "GEMINI_API_KEY"
       project_id = var.project_id
       secret     = var.gemini_api_secret_id
@@ -277,6 +297,7 @@ resource "google_cloudfunctions2_function" "md_generator" {
 }
 
 locals {
+  # Workflow の OIDC audience は md-generator の実URLを使用する。
   md_generator_audience = google_cloudfunctions2_function.md_generator.service_config[0].uri
 }
 
@@ -321,7 +342,10 @@ resource "google_workflows_workflow" "docai_monitor" {
   description     = "Monitor Document AI batch LRO and trigger markdown generation"
 
   source_contents = templatefile("${path.module}/workflows/docai_monitor.yaml", {
+    # Workflow テンプレートへ実環境値を注入する。
+    # temp_bucket_name は MD 成功後の JSON クリーンアップで使用する。
     project_id            = var.project_id
+    temp_bucket_name      = google_storage_bucket.buckets["temp"].name
     jobs_collection       = var.firestore_jobs_collection
     md_generator_url      = google_cloudfunctions2_function.md_generator.service_config[0].uri
     md_generator_audience = local.md_generator_audience
@@ -344,6 +368,7 @@ resource "terraform_data" "md_generator_http_migration" {
 # OCR trigger function
 #
 resource "google_cloudfunctions2_function" "ocr_trigger" {
+  # input バケットの PDF 受信を起点に DocAI + Workflow を起動する Event Function。
   name     = var.ocr_trigger_function_name
   location = var.region
 
@@ -371,6 +396,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
     service_account_email            = var.functions_runtime_service_account_email
 
     environment_variables = {
+      # ocr-trigger から Workflow 実行に必要な識別子/URLを引き渡す。
       APP_ENV                      = "gcp"
       GCP_PROJECT_ID               = var.project_id
       PROCESSOR_ID                 = google_document_ai_processor.ocr.name
@@ -391,6 +417,7 @@ resource "google_cloudfunctions2_function" "ocr_trigger" {
   }
 
   event_trigger {
+    # input バケットへのオブジェクト作成(finalized)をトリガにする。
     event_type            = "google.cloud.storage.object.v1.finalized"
     retry_policy          = "RETRY_POLICY_RETRY"
     service_account_email = var.functions_runtime_service_account_email

@@ -1,5 +1,8 @@
-name: Terraform (infra only)
+name: Terraform Infra Deploy
 
+# 実行トリガ:
+# - PR: Plan のみ実行
+# - main push / 手動実行: Apply まで実行
 on:
   pull_request:
     branches: ["main"]
@@ -16,6 +19,7 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Terraform state 競合を防ぐため、同時実行を直列化する。
   group: terraform-infra-state
   cancel-in-progress: false
 
@@ -24,16 +28,19 @@ permissions:
   id-token: write
 
 env:
+  # Terraform を CI 実行向けに固定（対話入力なし）
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   TF_PLUGIN_CACHE_DIR: /tmp/tf-plugin-cache
 
 jobs:
   plan:
-    name: Terraform Plan (infra / PR)
+    # PR では差分確認のみ（本番反映はしない）
+    name: Plan (PR · infra)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
+      # Terraform 変数は GitHub Secrets から注入する。
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
       TF_VAR_region: ${{ secrets.GCP_REGION }}
       TF_VAR_bucket_location: ${{ secrets.BUCKET_LOCATION || secrets.GCP_REGION }}
@@ -48,6 +55,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Auth to Google Cloud (WIF)
+        # 鍵ファイルではなく Workload Identity Federation で短命トークン認証
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -62,6 +70,7 @@ jobs:
         run: mkdir -p "${TF_PLUGIN_CACHE_DIR}"
 
       - name: Cache plugin cache
+        # Provider プラグインをキャッシュして plan/apply 時間を短縮
         uses: actions/cache@v4
         with:
           path: /tmp/tf-plugin-cache
@@ -74,6 +83,7 @@ jobs:
         env:
           TFSTATE_BUCKET: ${{ secrets.TFSTATE_BUCKET }}
         run: |
+          # 毎回クリーンに初期化し、remote backend 設定を明示する
           rm -rf .terraform
           terraform init -reconfigure \
             -backend-config="bucket=${TFSTATE_BUCKET}" \
@@ -88,15 +98,18 @@ jobs:
         run: terraform plan -lock-timeout=5m -var-file=terraform.tfvars
 
   apply:
-    name: Terraform Apply (infra / main)
+    # PR以外（main push / 手動）でのみ apply を実行
+    name: Apply (main/workflow_dispatch · infra)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
+      # Apply 用の Terraform 変数
       TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
       TF_VAR_region: ${{ secrets.GCP_REGION }}
       TF_VAR_bucket_location: ${{ secrets.BUCKET_LOCATION || secrets.GCP_REGION }}
       TF_VAR_documentai_location: ${{ secrets.DOCUMENTAI_LOCATION || 'us' }}
       TF_VAR_functions_service_account_email: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+      # md-generator が参照する Secret Manager へ同期する元シークレット
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GEMINI_API_SECRET_ID: gemini-api-key
     defaults:
@@ -119,6 +132,9 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Sync Gemini API key to Secret Manager
+        # Terraform apply 前に Secret Manager へ最新キーを登録
+        # - secret が無ければ作成
+        # - 毎回 new version を追加
         run: |
           gcloud services enable secretmanager.googleapis.com --project="${{ secrets.GCP_PROJECT_ID }}"
           if ! gcloud secrets describe "${GEMINI_API_SECRET_ID}" --project="${{ secrets.GCP_PROJECT_ID }}" >/dev/null 2>&1; then
@@ -153,6 +169,7 @@ jobs:
 
       - name: Plan (infra)
         working-directory: infra
+        # 計画結果をファイル化し、直後の apply で同一計画を適用する
         run: terraform plan -lock-timeout=5m -var-file=terraform.tfvars -out=tfplan
 
       - name: Apply (infra)
