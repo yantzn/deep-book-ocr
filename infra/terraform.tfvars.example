@@ -22,7 +22,7 @@ documentai_processor_display_name = "deep-book-ocr-processor"
 ############################################
 
 gcp_location       = "us-central1"
-gemini_model_name  = "gemini-1.5-pro"
+gemini_model_name  = "gemini-2.5-flash"
 enable_gemini_polish = true
 gemini_max_input_chars = 120000
 gemini_timeout_sec = 60

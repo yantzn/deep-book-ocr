@@ -31,13 +31,12 @@ class Settings(BaseSettings):
 
     # プロジェクト/リージョンなど GCP 基本設定。
     # GCP project
-    gcp_project_id: str = Field(
-        default="deep-book-ocr", alias="GCP_PROJECT_ID")
-    gcp_location: str = Field(default="asia-northeast1", alias="GCP_LOCATION")
+    gcp_project_id: str = Field(..., alias="GCP_PROJECT_ID")
+    gcp_location: str = Field(..., alias="GCP_LOCATION")
 
     # 利用する Document AI プロセッサ設定。
     # Document AI processor
-    processor_location: str = Field(default="us", alias="PROCESSOR_LOCATION")
+    processor_location: str = Field(..., alias="PROCESSOR_LOCATION")
     # processor id or full resource
     processor_id: str = Field(..., alias="PROCESSOR_ID")
 

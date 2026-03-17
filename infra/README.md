@@ -92,7 +92,7 @@ terraform apply tfplan
 
 - `documentai_location` : Document AI のリージョン（例: `us`）
 - `gcp_location` : Gemini のリージョン（例: `us-central1`）
-- `gemini_model_name` : 生成モデル名（既定: `gemini-1.5-pro`）
+- `gemini_model_name` : 生成モデル名（既定: `gemini-2.5-flash`）
 - `docai_submit_timeout_sec` : OCR submit タイムアウト秒
 - `ocr_firestore_timeout_sec` : ocr-trigger の Firestore timeout 秒
 - `workflow_execute_timeout_sec` : ocr-trigger の Workflows create_execution timeout 秒

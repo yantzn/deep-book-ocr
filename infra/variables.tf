@@ -165,7 +165,7 @@ variable "workflow_execute_timeout_sec" {
 variable "gemini_model_name" {
   description = "Gemini model name for markdown polishing"
   type        = string
-  default     = "gemini-1.5-pro"
+  default     = "gemini-2.5-flash"
 }
 
 variable "enable_gemini_polish" {
