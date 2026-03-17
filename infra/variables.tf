@@ -186,6 +186,18 @@ variable "gemini_timeout_sec" {
   default     = 60
 }
 
+variable "gemini_request_max_attempts" {
+  description = "Max retry attempts for Gemini API requests"
+  type        = number
+  default     = 2
+}
+
+variable "gemini_retry_base_sleep_sec" {
+  description = "Base backoff seconds for Gemini API retries"
+  type        = number
+  default     = 1
+}
+
 variable "gcs_download_timeout_sec" {
   description = "GCS download timeout for md-generator in seconds"
   type        = number
