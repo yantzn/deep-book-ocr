@@ -12,6 +12,7 @@ from google.api_core.exceptions import Forbidden, GoogleAPICallError, NotFound
 from google.cloud import storage
 
 from .config import Settings
+from .observability import log_pipeline_event
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +133,24 @@ class LLMService:
         self.settings = settings
         self._session = requests.Session()
 
-    def _generate_via_gemini_api(self, prompt: str) -> str:
+    @dataclass(frozen=True)
+    class _GeminiResponse:
+        text: str
+        latency_ms: int
+        prompt_tokens: int | None
+        response_tokens: int | None
+        total_tokens: int | None
+
+    def _generate_via_gemini_api(self, prompt: str) -> _GeminiResponse:
         if not self.settings.gemini_api_key.strip():
             logger.warning("GEMINI_API_KEY is not set; using draft markdown")
-            return ""
+            return self._GeminiResponse(
+                text="",
+                latency_ms=0,
+                prompt_tokens=None,
+                response_tokens=None,
+                total_tokens=None,
+            )
 
         endpoint = (
             f"{self.settings.gemini_api_base_url.rstrip('/')}"
@@ -153,6 +168,7 @@ class LLMService:
             },
         }
 
+        started = time.perf_counter()
         try:
             response = self._session.post(
                 endpoint,
@@ -168,11 +184,15 @@ class LLMService:
             body = ""
             if e.response is not None:
                 body = e.response.text[:500]
+            latency_ms = int((time.perf_counter() - started) * 1000)
             raise RuntimeError(
-                f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} body={body}"
+                f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} latency_ms={latency_ms} body={body}"
             ) from e
         except requests.RequestException as e:
-            raise RuntimeError(f"Gemini API request failed: {e!r}") from e
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            raise RuntimeError(
+                f"Gemini API request failed: latency_ms={latency_ms} error={e!r}"
+            ) from e
 
         data = response.json()
         candidates = data.get("candidates") or []
@@ -184,10 +204,66 @@ class LLMService:
                 if text:
                     texts.append(text)
 
-        return "\n".join(texts).strip()
+        usage = data.get("usageMetadata") or {}
+        return self._GeminiResponse(
+            text="\n".join(texts).strip(),
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            prompt_tokens=usage.get("promptTokenCount"),
+            response_tokens=usage.get("candidatesTokenCount"),
+            total_tokens=usage.get("totalTokenCount"),
+        )
+
+    def _split_markdown_chunks(self, markdown: str) -> list[str]:
+        max_chars = max(1, int(self.settings.gemini_max_input_chars))
+        paragraphs = markdown.split("\n\n")
+
+        chunks: list[str] = []
+        current_parts: list[str] = []
+        current_chars = 0
+
+        def flush_current() -> None:
+            nonlocal current_parts, current_chars
+            if current_parts:
+                chunks.append("\n\n".join(current_parts).strip())
+                current_parts = []
+                current_chars = 0
+
+        for paragraph in paragraphs:
+            para = paragraph.strip()
+            if not para:
+                continue
+
+            para_len = len(para)
+            separator = 2 if current_parts else 0
+            next_len = current_chars + separator + para_len
+
+            if next_len <= max_chars:
+                current_parts.append(para)
+                current_chars = next_len
+                continue
+
+            flush_current()
+
+            if para_len <= max_chars:
+                current_parts.append(para)
+                current_chars = para_len
+                continue
+
+            for i in range(0, para_len, max_chars):
+                piece = para[i:i + max_chars].strip()
+                if piece:
+                    chunks.append(piece)
+
+        flush_current()
+        return chunks or [markdown[:max_chars]]
 
     def polish_markdown(self, draft_markdown: str) -> str:
-        prompt = f"""
+        chunks = self._split_markdown_chunks(draft_markdown)
+        chunk_outputs: list[str] = []
+        failures = 0
+
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            prompt = f"""
 You are an expert editor converting OCR text from books into clean, faithful Markdown.
 
 GOAL
@@ -228,13 +304,74 @@ OUTPUT
 - Do not translate unless the source text itself is translated.
 
 OCR TEXT:
-{draft_markdown[: self.settings.gemini_max_input_chars]}
+{chunk}
 """
-        polished = self._generate_via_gemini_api(prompt)
-        if not polished:
-            logger.warning("Gemini returned empty text; using draft markdown")
+            chunk_failed = False
+            prompt_tokens: int | None = None
+            response_tokens: int | None = None
+            total_tokens: int | None = None
+            latency_ms = 0
+
+            try:
+                result = self._generate_via_gemini_api(prompt)
+                polished_chunk = result.text.strip()
+                latency_ms = result.latency_ms
+                prompt_tokens = result.prompt_tokens
+                response_tokens = result.response_tokens
+                total_tokens = result.total_tokens
+                if not polished_chunk:
+                    chunk_failed = True
+                    failures += 1
+                    polished_chunk = chunk
+            except RuntimeError as e:
+                chunk_failed = True
+                failures += 1
+                polished_chunk = chunk
+                logger.warning(
+                    "Gemini chunk failed; using draft chunk: chunk=%d/%d error=%s",
+                    chunk_index,
+                    len(chunks),
+                    e,
+                )
+
+            fail_rate = failures / chunk_index
+            log_pipeline_event(
+                logger,
+                level=logging.INFO,
+                event="gemini_polish_chunk",
+                stage="processed",
+                chunk_index=chunk_index,
+                chunk_count=len(chunks),
+                chunk_input_chars=len(chunk),
+                chunk_output_chars=len(polished_chunk),
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                response_tokens=response_tokens,
+                total_tokens=total_tokens,
+                chunk_failed=chunk_failed,
+                fail_rate=round(fail_rate, 4),
+            )
+            chunk_outputs.append(polished_chunk)
+
+        combined = "\n\n".join(part.strip()
+                               for part in chunk_outputs if part.strip()).strip()
+        log_pipeline_event(
+            logger,
+            level=logging.INFO,
+            event="gemini_polish_summary",
+            stage="completed",
+            chunk_count=len(chunks),
+            failed_chunks=failures,
+            fail_rate=round(failures / len(chunks), 4),
+            input_chars=len(draft_markdown),
+            output_chars=len(combined) if combined else len(draft_markdown),
+        )
+
+        if not combined:
+            logger.warning(
+                "Gemini returned empty text across all chunks; using draft markdown")
             return draft_markdown
-        return polished
+        return combined
 
 
 @dataclass(frozen=True)
