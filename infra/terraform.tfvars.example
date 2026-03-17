@@ -22,8 +22,8 @@ documentai_processor_display_name = "deep-book-ocr-processor"
 ############################################
 
 gemini_model_name  = "gemini-2.5-flash"
-# Gemini API key はコミットせず、個人環境の tfvars にだけ設定してください
-# gemini_api_key    = "YOUR_GEMINI_API_KEY"
+# Secret Manager に保存する secret id
+gemini_api_secret_id = "gemini-api-key"
 enable_gemini_polish = true
 gemini_max_input_chars = 120000
 gemini_timeout_sec = 60

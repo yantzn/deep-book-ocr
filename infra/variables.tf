@@ -162,11 +162,10 @@ variable "gemini_model_name" {
   default     = "gemini-2.5-flash"
 }
 
-variable "gemini_api_key" {
-  description = "Gemini API key for md-generator"
+variable "gemini_api_secret_id" {
+  description = "Secret Manager secret id for md-generator Gemini API key"
   type        = string
-  default     = ""
-  sensitive   = true
+  default     = "gemini-api-key"
 }
 
 variable "enable_gemini_polish" {
