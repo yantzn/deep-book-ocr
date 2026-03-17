@@ -46,6 +46,14 @@ class Settings(BaseSettings):
         default=60.0,
         alias="GEMINI_TIMEOUT_SEC",
     )
+    gemini_request_max_attempts: int = Field(
+        default=2,
+        alias="GEMINI_REQUEST_MAX_ATTEMPTS",
+    )
+    gemini_retry_base_sleep_sec: float = Field(
+        default=1.0,
+        alias="GEMINI_RETRY_BASE_SLEEP_SEC",
+    )
 
     gcs_download_timeout_sec: float = Field(
         default=30.0,

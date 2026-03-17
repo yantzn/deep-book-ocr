@@ -17,6 +17,7 @@ main:
           # 10秒間隔 x 120回 = 最大20分待機
           - md_poll_count: 0
           - md_poll_max: 120
+          - trigger_failed: false
 
     - markRunning:
       # DocAIのLRO監視に入る前にジョブ状態を実行中へ更新
@@ -87,18 +88,43 @@ main:
         next: triggerMdGenerator
 
     - triggerMdGenerator:
-      # md-generator は非同期で進むため、後続でFirestoreを監視する
-        call: http.post
-        args:
-          url: $${md_generator_url}
-          auth:
-            type: OIDC
-            audience: $${md_generator_audience}
-          headers:
-            Content-Type: "application/json"
-          body:
-            job_id: $${job_id}
-        result: md_response
+      # md-generator は非同期で進むため、後続でFirestoreを監視する。
+      # HTTP 500 などが返っても即時失敗せず、ジョブ状態を見に行く。
+        try:
+          call: http.post
+          args:
+            url: $${md_generator_url}
+            auth:
+              type: OIDC
+              audience: $${md_generator_audience}
+            headers:
+              Content-Type: "application/json"
+            body:
+              job_id: $${job_id}
+          result: md_response
+        except:
+          as: trigger_error
+          steps:
+            - setTriggerFailed:
+                assign:
+                  - trigger_failed: true
+            - recordMdTriggerHttpError:
+                call: googleapis.firestore.v1.projects.databases.documents.patch
+                args:
+                  name: $${"projects/" + project_id + "/databases/(default)/documents/" + jobs_collection + "/" + job_id}
+                  updateMask:
+                    fieldPaths: ["last_error"]
+                  body:
+                    fields:
+                      last_error:
+                        stringValue: $${json.encode_to_string(trigger_error)}
+        next: checkTriggerResult
+
+    - checkTriggerResult:
+      # HTTPエラー時はステータス上書きせず、実ジョブ状態をポーリングで確認する。
+        switch:
+          - condition: $${trigger_failed}
+            next: getJobAfterMd
         next: markMdTriggered
 
     - markMdTriggered:

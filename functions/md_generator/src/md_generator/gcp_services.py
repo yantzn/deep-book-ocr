@@ -170,31 +170,70 @@ class LLMService:
             },
         }
 
+        max_attempts = max(1, int(self.settings.gemini_request_max_attempts))
+        base_sleep_sec = max(0.0, float(
+            self.settings.gemini_retry_base_sleep_sec))
         started = time.perf_counter()
-        try:
-            response = self._session.post(
-                endpoint,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": self.settings.gemini_api_key,
-                },
-                json=payload,
-                timeout=self.settings.gemini_timeout_sec,
+        response: requests.Response | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self._session.post(
+                    endpoint,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self.settings.gemini_api_key,
+                    },
+                    json=payload,
+                    timeout=self.settings.gemini_timeout_sec,
+                )
+                response.raise_for_status()
+                last_error = None
+                break
+            except requests.HTTPError as e:
+                last_error = e
+                status_code = getattr(e.response, "status_code", None)
+                is_retryable = status_code is not None and status_code >= 500
+                if attempt >= max_attempts or not is_retryable:
+                    body = ""
+                    if e.response is not None:
+                        body = e.response.text[:500]
+                    latency_ms = int((time.perf_counter() - started) * 1000)
+                    raise RuntimeError(
+                        f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} latency_ms={latency_ms} body={body}"
+                    ) from e
+                sleep_sec = base_sleep_sec * attempt
+                logger.warning(
+                    "Gemini HTTP error (retrying): attempt=%d/%d status=%s sleep_sec=%.2f",
+                    attempt,
+                    max_attempts,
+                    status_code,
+                    sleep_sec,
+                )
+                time.sleep(sleep_sec)
+            except requests.RequestException as e:
+                last_error = e
+                if attempt >= max_attempts:
+                    latency_ms = int((time.perf_counter() - started) * 1000)
+                    raise RuntimeError(
+                        f"Gemini API request failed: latency_ms={latency_ms} error={e!r}"
+                    ) from e
+                sleep_sec = base_sleep_sec * attempt
+                logger.warning(
+                    "Gemini request exception (retrying): attempt=%d/%d sleep_sec=%.2f error=%r",
+                    attempt,
+                    max_attempts,
+                    sleep_sec,
+                    e,
+                )
+                time.sleep(sleep_sec)
+
+        if response is None:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            raise RuntimeError(
+                f"Gemini API request failed: latency_ms={latency_ms} error={last_error!r}"
             )
-            response.raise_for_status()
-        except requests.HTTPError as e:
-            body = ""
-            if e.response is not None:
-                body = e.response.text[:500]
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            raise RuntimeError(
-                f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} latency_ms={latency_ms} body={body}"
-            ) from e
-        except requests.RequestException as e:
-            latency_ms = int((time.perf_counter() - started) * 1000)
-            raise RuntimeError(
-                f"Gemini API request failed: latency_ms={latency_ms} error={e!r}"
-            ) from e
 
         data = response.json()
         candidates = data.get("candidates") or []
