@@ -175,7 +175,7 @@ variable "enable_gemini_polish" {
 }
 
 variable "gemini_max_input_chars" {
-  description = "Max input characters sent to Gemini"
+  description = "Max input characters per Gemini chunk request"
   type        = number
   default     = 120000
 }
