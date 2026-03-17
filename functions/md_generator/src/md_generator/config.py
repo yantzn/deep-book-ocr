@@ -46,6 +46,14 @@ class Settings(BaseSettings):
         default=60.0,
         alias="GEMINI_TIMEOUT_SEC",
     )
+    gemini_connect_timeout_sec: float = Field(
+        default=10.0,
+        alias="GEMINI_CONNECT_TIMEOUT_SEC",
+    )
+    gemini_read_timeout_sec: float = Field(
+        default=60.0,
+        alias="GEMINI_READ_TIMEOUT_SEC",
+    )
     gemini_request_max_attempts: int = Field(
         default=2,
         alias="GEMINI_REQUEST_MAX_ATTEMPTS",

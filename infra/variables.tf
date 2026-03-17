@@ -186,6 +186,18 @@ variable "gemini_timeout_sec" {
   default     = 60
 }
 
+variable "gemini_connect_timeout_sec" {
+  description = "Gemini API connect timeout in seconds"
+  type        = number
+  default     = 10
+}
+
+variable "gemini_read_timeout_sec" {
+  description = "Gemini API read timeout in seconds"
+  type        = number
+  default     = 60
+}
+
 variable "gemini_request_max_attempts" {
   description = "Max retry attempts for Gemini API requests"
   type        = number
