@@ -101,7 +101,6 @@ main:
               Content-Type: "application/json"
             body:
               job_id: $${job_id}
-          next: markMdTriggered
         except:
           as: trigger_error
           steps:
@@ -184,7 +183,6 @@ main:
           args:
             bucket: $${input_bucket}
             object: $${input_name}
-          next: listTempJsonObjects
         except:
           as: input_delete_error
           steps:
