@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+
+logger = logging.getLogger(__name__)
 
 
 class MarkdownPolisher(Protocol):
@@ -38,8 +42,8 @@ def _get_vertices(layout: dict[str, Any]) -> list[dict[str, float]]:
     # normalizedVertices / vertices どちらの形式でも扱えるよう統一。
     poly = layout.get("boundingPoly", {})
     vertices = poly.get("normalizedVertices") or poly.get("vertices") or []
-    normalized: list[dict[str, float]] = []
 
+    normalized: list[dict[str, float]] = []
     for v in vertices:
         x = float(v.get("x", 0.0) or 0.0)
         y = float(v.get("y", 0.0) or 0.0)
@@ -123,9 +127,7 @@ def _normalize_line_breaks(text: str) -> str:
 
 
 def _merge_wrapped_lines(text: str) -> str:
-    """
-    OCR由来の不自然な改行をある程度つなぐ。
-    """
+    """OCR由来の不自然な改行をある程度つなぐ。"""
     lines = [ln.strip() for ln in _normalize_line_breaks(text).split("\n")]
     merged: list[str] = []
 
@@ -160,6 +162,8 @@ def _merge_wrapped_lines(text: str) -> str:
         if line == "":
             if not out or out[-1] == "":
                 continue
+            out.append(line)
+            continue
         out.append(line)
 
     return "\n".join(out).strip()
@@ -170,8 +174,8 @@ def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list
     # blocks がある場合はそちらを優先（より大きい意味単位を優先）。
     full_text = doc.get("text", "")
     page_number = int(page.get("pageNumber", 0) or 0)
-    blocks: list[TextBlock] = []
 
+    blocks: list[TextBlock] = []
     page_blocks = page.get("blocks", [])
     page_paragraphs = page.get("paragraphs", [])
 
@@ -182,6 +186,7 @@ def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list
                 full_text, layout.get("textAnchor", {})))
             if not text:
                 continue
+
             y_top, x_left, y_bottom, x_right = _bbox_from_layout(layout)
             blocks.append(
                 TextBlock(
@@ -202,6 +207,7 @@ def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list
             full_text, layout.get("textAnchor", {})))
         if not text:
             continue
+
         y_top, x_left, y_bottom, x_right = _bbox_from_layout(layout)
         blocks.append(
             TextBlock(
@@ -214,6 +220,7 @@ def _extract_blocks_from_page(doc: dict[str, Any], page: dict[str, Any]) -> list
                 block_type="paragraph",
             )
         )
+
     return blocks
 
 
@@ -234,10 +241,9 @@ def _sort_blocks_reading_order(blocks: list[TextBlock]) -> list[TextBlock]:
 
 
 def _dedupe_repeated_header_footer(blocks: list[TextBlock]) -> list[TextBlock]:
-    """
-    複数ページで繰り返すヘッダ/フッタ候補を落とす。
-    """
+    """複数ページで繰り返すヘッダ/フッタ候補を落とす。"""
     freq: dict[str, int] = {}
+
     # 短文の出現回数を数え、複数ページで反復する要素を候補化する。
     for b in blocks:
         t = b.text.strip()
@@ -253,13 +259,14 @@ def _dedupe_repeated_header_footer(blocks: list[TextBlock]) -> list[TextBlock]:
         if _is_probable_header_footer(t, b.y_top, b.y_bottom):
             continue
         filtered.append(b)
+
     return filtered
 
 
 def _blocks_to_markdown(blocks: list[TextBlock]) -> str:
     # TextBlock を行単位テキストへ落とし込み、簡易ルールで見出し化する。
     parts: list[str] = []
-    last_page = None
+    last_page: int | None = None
 
     for b in blocks:
         text = b.text.strip()
@@ -318,6 +325,7 @@ def build_markdown_from_documentai_jsons(
 ) -> tuple[str, dict[str, Any]]:
     # 1) JSON -> block 収集
     blocks = _collect_blocks(json_docs)
+
     # 2) 読み順整列 + ヘッダ/フッタ除去
     sorted_blocks = _sort_blocks_reading_order(blocks)
     filtered_blocks = _dedupe_repeated_header_footer(sorted_blocks)
@@ -334,13 +342,33 @@ def build_markdown_from_documentai_jsons(
 
     polished = draft
     used_gemini = False
+    fallback_used = False
+    polish_error_kind: str | None = None
+    polish_error_message: str | None = None
 
-    # 4) 任意で Gemini による体裁調整を実施（空結果は採用しない）
+    # 4) 任意で Gemini による体裁調整を実施
+    #    ここで失敗しても本線は落とさず、draft をそのまま採用する。
     if enable_gemini_polish:
-        polished_candidate = llm_service.polish_markdown(draft)
-        if polished_candidate.strip():
-            polished = polished_candidate.strip()
-            used_gemini = True
+        try:
+            polished_candidate = llm_service.polish_markdown(draft)
+            if polished_candidate.strip():
+                polished = polished_candidate.strip()
+                used_gemini = True
+            else:
+                logger.warning(
+                    "Gemini polish returned empty content. Falling back to draft markdown."
+                )
+                fallback_used = True
+        except Exception as exc:
+            polish_error_kind = exc.__class__.__name__
+            polish_error_message = str(exc)
+            fallback_used = True
+            logger.exception(
+                "Gemini polish failed. Falling back to draft markdown. "
+                "error_kind=%s error_message=%s",
+                polish_error_kind,
+                polish_error_message,
+            )
 
     if not polished.endswith("\n"):
         # 出力末尾を改行で統一し、後段処理や表示差分を安定化する。
@@ -352,7 +380,14 @@ def build_markdown_from_documentai_jsons(
         "raw_blocks": len(blocks),
         "filtered_blocks": len(filtered_blocks),
         "used_gemini": used_gemini,
+        "fallback_used": fallback_used,
         "draft_chars": len(draft),
         "final_chars": len(polished),
     }
+
+    if polish_error_kind:
+        stats["polish_error_kind"] = polish_error_kind
+    if polish_error_message:
+        stats["polish_error_message"] = polish_error_message
+
     return polished, stats
