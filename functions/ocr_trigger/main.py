@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import logging
 import os
 import sys
 import time
+import traceback
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
@@ -29,6 +31,13 @@ WorkflowExecutionService = workflow_service_module.WorkflowExecutionService
 log_pipeline_event = observability_module.log_pipeline_event
 
 logger = logging.getLogger(__name__)
+
+
+def _short_text(value: Any, *, max_len: int = 500) -> str:
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}..."
 
 
 @dataclass(frozen=True)
@@ -147,6 +156,10 @@ def start_ocr(event: CloudEvent):
     # リクエスト単位の識別子と、全体処理時間計測用のタイマー。
     started_at = time.perf_counter()
     request_id = str(uuid.uuid4())[:8]
+    final_status = "UNKNOWN"
+    error_kind = ""
+    error_message = ""
+    stacktrace_hash = ""
 
     _log_event(
         level=logging.INFO,
@@ -171,6 +184,7 @@ def start_ocr(event: CloudEvent):
                 request_id=request_id,
                 reason="missing_bucket_or_name",
             )
+            final_status = "EVENT_REJECTED"
             return ("invalid event data", 400)
 
         _log_event(
@@ -192,6 +206,7 @@ def start_ocr(event: CloudEvent):
                 reason="non_pdf_object",
                 name=parsed.name,
             )
+            final_status = "SKIPPED_NON_PDF"
             return ("skipped: non-pdf", 200)
 
         # 1) Document AI のバッチ OCR ジョブを送信する。
@@ -256,19 +271,34 @@ def start_ocr(event: CloudEvent):
             operation_name=operation_name,
             elapsed_ms=_elapsed_ms(submit_started),
         )
+        final_status = "DOC_AI_SUBMITTED"
 
         return ("OK", 200)
 
     except Exception as e:  # noqa: BLE001
+        error_kind = type(e).__name__
+        error_message = _short_text(repr(e), max_len=600)
+        traceback_text = traceback.format_exc()
+        stacktrace_hash = hashlib.sha1(
+            traceback_text.encode("utf-8")).hexdigest()[:12]
         # 想定外エラーはリクエスト文脈付きで記録し、500 を返す。
         _log_event(
             level=logging.ERROR,
             stage="failed",
             request_id=request_id,
-            error=repr(e),
+            error_kind=error_kind,
+            error_message=error_message,
+            stacktrace_hash=stacktrace_hash,
         )
-        logger.exception(
-            "[%s] Unexpected error while starting OCR: %s", request_id, e)
+        logger.error(
+            "[%s] Unexpected error while starting OCR: %s (kind=%s stacktrace_hash=%s)",
+            request_id,
+            e,
+            error_kind,
+            stacktrace_hash,
+            exc_info=True,
+        )
+        final_status = "FAILED"
         return ("Internal Server Error", 500)
 
     finally:
@@ -277,5 +307,9 @@ def start_ocr(event: CloudEvent):
             level=logging.INFO,
             stage="finished",
             request_id=request_id,
+            final_status=final_status,
+            error_kind=error_kind,
+            error_message=error_message,
+            stacktrace_hash=stacktrace_hash,
             total_elapsed_ms=_elapsed_ms(started_at),
         )

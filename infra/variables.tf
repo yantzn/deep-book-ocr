@@ -195,13 +195,13 @@ variable "gemini_connect_timeout_sec" {
 variable "gemini_read_timeout_sec" {
   description = "Gemini API read timeout in seconds"
   type        = number
-  default     = 60
+  default     = 90
 }
 
 variable "gemini_request_max_attempts" {
   description = "Max retry attempts for Gemini API requests"
   type        = number
-  default     = 2
+  default     = 3
 }
 
 variable "gemini_retry_base_sleep_sec" {

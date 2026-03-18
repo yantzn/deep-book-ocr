@@ -31,7 +31,9 @@ md_generator_min_instance_count = 1
 ocr_trigger_max_instance_request_concurrency  = 1
 md_generator_max_instance_request_concurrency = 1
 
-docai_submit_timeout_sec = 60
-gemini_model_name        = "gemini-2.5-flash"
+docai_submit_timeout_sec    = 60
+gemini_model_name           = "gemini-2.5-flash"
+gemini_read_timeout_sec     = 90
+gemini_request_max_attempts = 3
 
 create_firestore_database = false
