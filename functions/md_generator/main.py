@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import hashlib
 import logging
 import os
 import sys
 import time
+import traceback
 import uuid
 from typing import Any
 
@@ -27,6 +29,13 @@ log_pipeline_event = observability_module.log_pipeline_event
 parse_trace_id = observability_module.parse_trace_id
 
 logger = logging.getLogger(__name__)
+
+
+def _short_text(value: Any, *, max_len: int = 500) -> str:
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}..."
 
 
 def _elapsed_ms(started_at: float) -> int:
@@ -97,6 +106,12 @@ def generate_markdown(request: Request):
     request_id = str(uuid.uuid4())[:8]
     trace_id = parse_trace_id(request.headers.get("X-Cloud-Trace-Context"))
     job_id = ""
+    final_status = "UNKNOWN"
+    fallback_used = False
+    used_gemini: bool | None = None
+    error_kind = ""
+    error_message = ""
+    stacktrace_hash = ""
 
     _setup_logging()
 
@@ -133,6 +148,7 @@ def generate_markdown(request: Request):
                 trace_id=trace_id,
                 reason="missing_job_id",
             )
+            final_status = "REQUEST_REJECTED"
             return ("job_id が必要です", 400)
 
         # 2) Firestore からジョブ定義を取得し、処理対象情報を確定する。
@@ -207,11 +223,30 @@ def generate_markdown(request: Request):
         # 6) OCR JSON から下書き生成し、必要に応じて LLM で体裁を整える。
         # enable_gemini_polish が true の場合のみ、整形処理を有効化する。
         markdown_started = time.perf_counter()
-        markdown, stats = build_markdown_from_documentai_jsons(
-            json_docs=json_docs,
-            llm_service=llm_service,
-            enable_gemini_polish=settings.enable_gemini_polish,
-        )
+        try:
+            markdown, stats = build_markdown_from_documentai_jsons(
+                json_docs=json_docs,
+                llm_service=llm_service,
+                enable_gemini_polish=settings.enable_gemini_polish,
+            )
+        except RuntimeError as e:
+            if settings.enable_gemini_polish and "Gemini API request failed" in str(e):
+                fallback_used = True
+                _log_event(
+                    level=logging.WARNING,
+                    stage="markdown_build_fallback",
+                    request_id=request_id,
+                    job_id=job_id,
+                    trace_id=trace_id,
+                    reason="gemini_timeout_or_request_error",
+                )
+                markdown, stats = build_markdown_from_documentai_jsons(
+                    json_docs=json_docs,
+                    llm_service=llm_service,
+                    enable_gemini_polish=False,
+                )
+            else:
+                raise
         _log_event(
             level=logging.INFO,
             stage="markdown_built",
@@ -220,8 +255,10 @@ def generate_markdown(request: Request):
             trace_id=trace_id,
             markdown_chars=len(markdown),
             stats=stats,
+            fallback_used=fallback_used,
             elapsed_ms=_elapsed_ms(markdown_started),
         )
+        used_gemini = bool(stats.get("used_gemini", False))
 
         # 7) 出力バケットへ Markdown を保存する。
         # 入力オブジェクト単位で追跡しやすいよう `<input_name>/<generation>.md` を採用。
@@ -250,6 +287,7 @@ def generate_markdown(request: Request):
                 "status": "MD_SUCCEEDED",
                 "output_markdown_uri": output_uri,
                 "md_stats": stats,
+                "fallback_used": fallback_used,
                 "md_completed_at": job_store.now_iso(),
             },
         )
@@ -261,10 +299,17 @@ def generate_markdown(request: Request):
             trace_id=trace_id,
             status="MD_SUCCEEDED",
         )
+        final_status = "MD_SUCCEEDED"
 
         return ("OK", 200)
 
     except Exception as e:
+        error_kind = type(e).__name__
+        error_message = _short_text(repr(e), max_len=600)
+        traceback_text = traceback.format_exc()
+        stacktrace_hash = hashlib.sha1(
+            traceback_text.encode("utf-8")).hexdigest()[:12]
+        is_retryable = "ReadTimeout" in error_message or "Timeout" in error_message
         # 例外時はログへ詳細を残し、可能な限りジョブ状態を FAILED へ更新する。
         _log_event(
             level=logging.ERROR,
@@ -272,10 +317,20 @@ def generate_markdown(request: Request):
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
-            error=repr(e),
+            error_kind=error_kind,
+            error_message=error_message,
+            retryable=is_retryable,
+            stacktrace_hash=stacktrace_hash,
         )
-        logger.exception(
-            "[%s] Unexpected error while generating markdown: %s", request_id, e)
+        logger.error(
+            "[%s] Unexpected error while generating markdown: %s (kind=%s stacktrace_hash=%s)",
+            request_id,
+            e,
+            error_kind,
+            stacktrace_hash,
+            exc_info=True,
+        )
+        final_status = "MD_FAILED"
 
         try:
             if job_id:
@@ -311,5 +366,11 @@ def generate_markdown(request: Request):
             request_id=request_id,
             job_id=job_id,
             trace_id=trace_id,
+            final_status=final_status,
+            fallback_used=fallback_used,
+            used_gemini=used_gemini,
+            error_kind=error_kind,
+            error_message=error_message,
+            stacktrace_hash=stacktrace_hash,
             total_elapsed_ms=_elapsed_ms(started_at),
         )
