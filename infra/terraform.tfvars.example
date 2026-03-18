@@ -25,9 +25,9 @@ gemini_model_name  = "gemini-2.5-flash"
 # Secret Manager に保存する secret id
 gemini_api_secret_id = "gemini-api-key"
 enable_gemini_polish = true
-gemini_max_input_chars = 120000
+gemini_max_input_chars = 80000
 gemini_timeout_sec = 60
-gemini_read_timeout_sec = 90
+gemini_read_timeout_sec = 120
 gemini_request_max_attempts = 3
 gcs_download_timeout_sec = 30
 gcs_upload_timeout_sec = 30

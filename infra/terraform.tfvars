@@ -33,7 +33,8 @@ md_generator_max_instance_request_concurrency = 1
 
 docai_submit_timeout_sec    = 60
 gemini_model_name           = "gemini-2.5-flash"
-gemini_read_timeout_sec     = 90
+gemini_max_input_chars      = 80000
+gemini_read_timeout_sec     = 120
 gemini_request_max_attempts = 3
 
 create_firestore_database = false
