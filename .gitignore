@@ -73,3 +73,30 @@ Thumbs.db
 application_default_credentials.json
 *.pem
 *.key
+
+# ========================
+# Cache & Build
+# ========================
+
+.terraform.lock.hcl  # → 現在は含止めているが、実装確認
+*.egg-info/
+dist/
+build/
+
+# ========================
+# IDE
+# ========================
+
+.idea/
+*.swp
+*.swo
+*~
+
+# ========================
+# Sensitive (二重防止)
+# ========================
+
+*.tfvars.backup
+secrets/
+credentials.json
+google-api-key.json

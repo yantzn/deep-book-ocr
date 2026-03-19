@@ -1,456 +1,240 @@
-最高です 👍
-今の最新構成（**srcレイアウト統一 / APP_ENV / Cloud Logging / pip-compile / Ruff / DevContainer / Gen2 / GCSイベントトリガー**）に合わせて README をアップデートします。
+# 🧠 Deep Book OCR
 
-そのまま置き換え可能な **最新版 README.md 完全版** を出します。
-
----
-
-# 📚 Deep Book OCR (GCP Serverless Edition)
-
-Google Cloud Platform を活用し、
-
-**PDF → OCR → JSON → Markdown構造化 → AI整形**
-
-を行うサーバーレス自動パイプラインです。
+GCPベースの **ドキュメントOCR → Markdown変換パイプライン**  
+Document AI + Gemini を組み合わせて、PDF/画像を構造化テキストに変換します。
 
 ---
 
-## 🚀 使用技術
+# 👤 想定ユーザー
 
-| サービス                 | 役割         |
-| -------------------- | ---------- |
-| Document AI          | OCR        |
-| Cloud Functions Gen2 | 処理制御       |
-| Vertex AI (Gemini)   | Markdown整形 |
-| Cloud Storage        | ファイル管理     |
-| Terraform            | 完全IaC      |
-| GitHub Actions (WIF) | CI/CD      |
-| pip-tools            | 依存固定       |
-| Ruff                 | Lint       |
-| DevContainer         | ローカル開発     |
+- PDF書籍をOCR化してMarkdownとして再利用したいエンジニア
+- LLMを含むサーバレスパイプラインを構築したい人
+- Terraform + GitHub Actionsで運用したいチーム
 
 ---
 
-# 🏗 システム構成
+# 🚨 重要（最初に読んでください）
 
+本プロジェクトは **2段階構成**です。
+
+```text
+1. Bootstrap（IAM構築）※手動
+2. GitHub Actions（デプロイ）※自動
 ```
-PDF Upload
+
+👉 ローカルでの terraform apply は不要  
+👉 GitHub Actions前提です
+
+---
+
+# 🎯 What is this?
+
+```text
+PDF / 画像
    ↓
-Cloud Storage (input bucket)
+Document AI（OCR）
    ↓
-Cloud Functions (ocr-trigger)
+構造化JSON
    ↓
-Document AI
+Markdown生成
    ↓
-Cloud Storage (JSON output)
+Gemini（任意）
    ↓
-Cloud Functions (md-generator)
-   ↓
-Vertex AI (Gemini)
-   ↓
-Cloud Storage (Markdown output)
+Markdown
 ```
+
+補足:
+- **Document AI** = GCPのOCRサービス
+- **Workflows** = 複数ステップのサーバレス実行オーケストレーター
 
 ---
 
-# 📁 リポジトリ構成
+# 🚀 Why
 
-```
-deep-book-ocr/
-├── .devcontainer/
-├── .github/workflows/deploy-functions.yml
-├── bootstrap/
-├── infra/
-├── functions/
-│   ├── ocr_trigger/
-│   │   ├── src/ocr_trigger/
-│   │   │   ├── config.py
-│   │   │   ├── entrypoint.py
-│   │   │   └── gcp_services.py
-│   │   ├── tests/
-│   │   ├── local_runner.py
-│   │   └── requirements.*
-│   │
-│   └── md_generator/
-│       ├── src/md_generator/
-│       │   ├── config.py
-│       │   ├── entrypoint.py
-│       │   ├── gcp_services.py
-│       │   └── markdown_logic.py
-│       ├── tests/
-│       ├── local_runner.py
-│       └── requirements.*
-│
-├── ruff.toml
-├── terraform.tfvars
-└── README.md
-```
+- OCR結果をそのまま使えない問題を解決
+- Markdownで再利用可能
+- LLMで整形可能
+- フルサーバレス
 
 ---
 
-# 🎯 設計方針
+# 🏗 Architecture
 
-## ✅ src構成統一（main.pyなし）
+![architecture](docs/architecture.png)
 
-Cloud Functions Gen2 では `main.py` は必須ではありません。
+### Components
 
-すべての関数は：
-
-```
-src/<package>/entrypoint.py
-```
-
-にエントリポイントを統一。
-
-デプロイ時に：
-
-```
---entry-point=generate_markdown
---entry-point=start_ocr
-```
-
-を指定します。
+| Component | Role |
+| --- | --- |
+| ocr-trigger | GCSイベントを受けてDocument AI OCRを開始 |
+| docai-monitor | OCR完了までポーリングし、完了後に次処理へ遷移 |
+| md-generator | OCR JSONからMarkdownを生成（必要に応じGeminiで整形） |
 
 ---
 
-## ✅ APP_ENV 切り替え
+# 🔐 Bootstrap（IAM）
 
-| 環境   | APP_ENV |
-| ---- | ------- |
-| ローカル | local   |
-| 本番   | gcp     |
+GitHub ActionsからTerraformを安全に実行するための **認証基盤（OIDC / WIF）** を作成します。
 
-### ログ挙動
+### なぜ必要？
 
-| APP_ENV | ログ            |
-| ------- | ------------- |
-| local   | 標準 logging    |
-| gcp     | Cloud Logging |
+- GitHub Actions から GCP へ鍵レス認証するため
+- 長期JSONキーを配布せずに運用するため
 
----
+### 作成されるリソース
 
-## ✅ ローカル実行方針（実GCS）
+- Workload Identity Pool（GitHub OIDCトークンの受け皿）
+- Workload Identity Provider（GitHubリポジトリを信頼する設定）
+- Service Account（GitHub Actions が Terraform 実行時に利用）
+- IAM Binding（Provider から Service Account へのなりすまし許可）
+- Terraform state 用 GCSバケット（`infra` のbackendで利用）
 
-ローカル実行時も Storage は実GCSを利用します。
-
-- `ocr_trigger`: 実GCS上の PDF を入力
-- `md_generator`: 実GCS上の Document AI JSON を入力
-
-Vertex AI は常に実GCP（ADC利用）。
-
----
-
-# 🚀 初回セットアップ
-
-## ① 前提（手動）
-
-Terraformで自動化できないもの：
-
-* GCPプロジェクト作成
-* Billing有効化
-* tfstate用GCS作成
-
-例：
-
-```
-deep-book-ocr-tfstate
-```
-
----
-
-## ② terraform.tfvars 作成
-
-```hcl
-project_id        = "deep-book-ocr"
-region            = "asia-northeast1"
-github_repository = "yantzn/deep-book-ocr"
-tfstate_bucket    = "deep-book-ocr-tfstate"
-```
-
----
-
-# 🧱 インフラ構築
-
-## bootstrap（API有効化）
+### 作成結果の確認（bootstrap apply後）
 
 ```bash
 cd bootstrap
-terraform init -reconfigure
-terraform apply -auto-approve -var-file=./terraform.tfvars
+terraform output workload_identity_provider_name
+terraform output github_actions_service_account_email
+terraform output tfstate_bucket_name
 ```
 
-確認用（Document AIサービスエージェント）:
+上記の出力値を、GitHub Secrets の `WIF_PROVIDER` / `WIF_SERVICE_ACCOUNT` / `TFSTATE_BUCKET` に設定します。
 
 ```bash
-terraform output documentai_service_agent_email
+cd bootstrap
+terraform init
+terraform apply -var-file=terraform.tfvars
 ```
 
 ---
 
-## infra（本体）
+# 🔑 GitHub Secrets
+
+- GCP_PROJECT_ID
+- GCP_REGION
+- TFSTATE_BUCKET
+- WIF_PROVIDER
+- WIF_SERVICE_ACCOUNT
+- GEMINI_API_KEY
+
+---
+
+# 🚀 Deploy
 
 ```bash
-cd ../infra
-terraform init -reconfigure
-terraform apply -auto-approve -var-file=../terraform.tfvars
+git push origin main
 ```
 
-`infra` ではデフォルトで Document AI SA に次の IAM を同時付与します。
+---
 
-- input バケット: `roles/storage.objectViewer`
-- temp バケット: `roles/storage.objectCreator`
+# 📥 Usage
 
-確認:
+`<INPUT_BUCKET>` は Terraform output で取得します。
 
 ```bash
-terraform output -raw input_bucket
-terraform output -raw temp_bucket
-terraform output documentai_service_agent_emails_effective
+cd infra
+terraform output input_bucket_name
+gsutil cp sample.pdf gs://<INPUT_BUCKET>
 ```
 
-実行主体を手動指定したい場合:
+---
+
+# 📤 Output
+
+`<OUTPUT_BUCKET>` は Terraform output で取得します。
 
 ```bash
-terraform apply -auto-approve -var-file=../terraform.tfvars \
-   -var="documentai_service_agent_email_override=service-<PROJECT_NUMBER>@gcp-sa-prod-dai-core.iam.gserviceaccount.com"
-```
-
-追加候補へも IAM を付けたい場合（任意）:
-
-```bash
-terraform apply -auto-approve -var-file=../terraform.tfvars \
-   -var='documentai_service_agent_emails_additional=["service-<PROJECT_NUMBER>@gcp-sa-documentai.iam.gserviceaccount.com"]'
-```
-
-実行順は次の 3 段階です。
-
-1. `bootstrap`（API有効化）
-2. `infra`（input/temp/output バケット作成 + Document AI バケットIAM付与）
-3. 必要時のみ `infra` を override 指定で再適用（手動指定）
-
-通常運用では `bootstrap` を再実行する必要はありません。
-
----
-
-# 🔐 GitHub Actions (WIF)
-
-Terraform apply 後：
-
-```bash
-terraform output -raw wif_provider_name
-terraform output -raw github_actions_service_account
-```
-
-GitHub Secrets に設定：
-
-| Name                | Value      |
-| ------------------- | ---------- |
-| WIF_PROVIDER        | output値    |
-| WIF_SERVICE_ACCOUNT | output値    |
-| GCP_PROJECT_ID      | project_id |
-| GCP_REGION          | region     |
-
----
-
-# 🤖 自動デプロイ
-
-push → GitHub Actions → Cloud Functions Gen2 再デプロイ
-
-エントリポイント：
-
-| Function     | entry_point       |
-| ------------ | ----------------- |
-| ocr-trigger  | start_ocr         |
-| md-generator | generate_markdown |
-
----
-
-# 🧪 ローカル開発
-
-## DevContainer（推奨）
-
-VSCode:
-
-```
-Reopen in Container
-```
-
-自動セットアップ：
-
-* Python
-* Terraform
-* gcloud
-* pip-tools
-
----
-
-## ADC認証（Gemini用）
-
-```bash
-sudo chown -R vscode:vscode /home/vscode/.config/gcloud
-gcloud auth application-default login
+cd infra
+terraform output output_bucket_name
+gsutil ls gs://<OUTPUT_BUCKET>
 ```
 
 ---
 
-# 🔍 ローカル関数実行
+# ⚙️ GitHub Actions
 
-前提:
+このプロジェクトは `.github/workflows/terraform-infra.yml` により以下を自動実行します。
 
-- ADCログイン済み
-- 実GCSに入力ファイルが配置済み
+- Terraform plan/apply
+- Cloud Functions Gen2 / Workflows / IAM の更新
+- Secret Manager への Gemini API キー同期
 
-## ocr_trigger
+### Flow
 
-```bash
-cd functions/ocr_trigger
-cp .env.example .env
-make install
-python local_runner.py
-```
-
-`.env` の最低限設定例:
-
-```dotenv
-APP_ENV=local
-GCP_PROJECT_ID=deep-book-ocr
-PROCESSOR_LOCATION=us
-PROCESSOR_ID=<DocumentAI Processor ID>
-TEMP_BUCKET=gs://deep-book-ocr-temp-2538d0
-LOCAL_INPUT_BUCKET=deep-book-ocr-input-2538d0
-LOCAL_INPUT_OBJECT=uploads/test.pdf
-```
-
-ローカルPDFは事前に実GCSへアップロード:
-
-```bash
-gcloud storage cp /path/to/test.pdf gs://deep-book-ocr-input-2538d0/uploads/test.pdf
-```
-
-`LOCAL_INPUT_OBJECT` はローカルパスではなく、バケット内オブジェクト名を指定してください。
+`push → OIDC認証 → Terraform apply → GCP構築`
 
 ---
 
-## md_generator
+# 🔐 OIDC Flow
 
-```bash
-cd functions/md_generator
-cp .env.example .env
-make install
-python local_runner.py
-```
-
-`.env` の最低限設定例:
-
-```dotenv
-APP_ENV=local
-GCP_PROJECT_ID=deep-book-ocr
-GCP_LOCATION=us-central1
-OUTPUT_BUCKET=deep-book-ocr-output-2538d0
-LOCAL_INPUT_BUCKET=deep-book-ocr-temp-2538d0
-LOCAL_INPUT_OBJECT=processed/sample_pdf/0.json
-MODEL_NAME=gemini-1.5-flash
-CHUNK_SIZE=10
-```
-
-`LOCAL_INPUT_OBJECT` は Document AI 出力JSONのオブジェクト名を指定してください。
-
-推奨実行順:
-
-1. `ocr_trigger` を実行して Document AI ジョブを起動
-2. `TEMP_BUCKET` に生成された JSON パスを確認
-3. その JSON パスを `md_generator` の `LOCAL_INPUT_OBJECT` に設定して実行
+![oidc](docs/oidc.png)
 
 ---
 
-# 🧪 テスト
+# ❗ Design Philosophy
 
-```bash
-make test
+- Geminiは後処理（必須ではない）
+- Markdown生成（OCR JSON → 構造復元）が主処理
+- Gemini失敗時は fallback で処理継続
+
+```text
+Gemini失敗 → fallback → success
 ```
 
 ---
 
-# 🧹 Lint
+# 📊 Logging
 
-```bash
-make lint
+### md-generator 失敗
+
+```text
+resource.type="cloud_run_revision"
+resource.labels.service_name="md-generator"
+jsonPayload.stage="failed"
+```
+
+### fallback発生の確認
+
+```text
+resource.type="cloud_run_revision"
+resource.labels.service_name="md-generator"
+jsonPayload.stage="finished"
+jsonPayload.fallback_used=true
 ```
 
 ---
 
-# 📦 依存管理
+# 🔍 Troubleshooting
 
-## 依存追加時
-
-```bash
-# requirements.in 編集
-make compile
-make install
-```
-
-## 通常開発
-
-```bash
-make install
-```
+| 問題 | 原因 | 対策 |
+| --- | --- | --- |
+| GitHub Actionsで403 | IAM / WIF未設定 | `bootstrap` を実行し、Secrets (`WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT`) を再確認 |
+| md-generatorで500 | GeminiのRead Timeout | `infra/terraform.tfvars` の `gemini_read_timeout_sec` を延長（例: 120〜180） |
+| 入力バケットが不明 | バケット名を直接書いていない | `cd infra && terraform output input_bucket_name` で取得 |
+| 出力先が不明 | 出力バケット名が不明 | `cd infra && terraform output output_bucket_name` で取得 |
 
 ---
 
-# 🧩 よくあるエラー
+# 🧩 Limitations
 
-## 403 API未有効
-
-→ bootstrap実行
-
----
-
-## Cloud Loggingが出ない
-
-→ APP_ENV=gcp が設定されているか確認
+- 大規模PDFは遅延
+- 完全復元ではない
 
 ---
 
-## GCSオブジェクトが見つからない
+# 📈 Future
 
-→ `LOCAL_INPUT_BUCKET` / `LOCAL_INPUT_OBJECT` と、実バケット上の配置を確認
-
----
-
-## Terraform state lock エラー（CI）
-
-`Error acquiring the state lock` が出た場合は、同時実行ジョブの完了を待って再実行してください。
-長時間残る stale lock の場合のみ、`infra` ディレクトリで `terraform force-unlock <LOCK_ID>` を実施します。
+- chunk処理
+- async化
 
 ---
 
-# 🔒 セキュリティ
+# ⭐ Contributing
 
-現在：
-
-```
-roles/editor
-```
-
-将来的に最小権限へ縮小予定。
+PR歓迎
 
 ---
 
-# 💰 コスト注意
+# 📄 License
 
-主な課金：
-
-* Document AI
-* Vertex AI
-* Cloud Functions
-
-テストは小さいPDF推奨。
-
----
-
-# 🧠 将来拡張
-
-* OCR後の自動要約
-* RAG化
-* Notion連携
-* Kindle統合
+MIT
