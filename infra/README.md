@@ -1,136 +1,183 @@
-# infra Terraform ガイド
+# infra Terraform Runbook
 
-このディレクトリは、Deep Book OCR の**本体インフラ**を作成します。
+このディレクトリは Deep Book OCR の本体インフラを管理します。  
+対象は **GCS / Cloud Functions Gen2 / Workflows / Document AI / IAM / Artifact Registry / Firestore(任意)** です。
 
-- GCS バケット（input/temp/output/source）
-- Cloud Functions Gen2（`ocr-trigger` / `md-generator`）
-- Document AI Processor
-- Artifact Registry（Functions ビルド用）
-- Workflows（Document AI 監視 + md-generator 起動）
-- Firestore（任意作成）
-- 実行SA向け IAM（Runtime/Workflow/Document AI）
-- 必須 API 有効化
+---
 
-## 前提
+## 1. このREADMEの目的
 
-先に `bootstrap` を適用し、以下を取得しておきます。
+このREADMEは以下を対象にした **運用手順書** です。
+
+- 初回構築（init/plan/apply）
+- 継続運用（安全な変更反映）
+- 障害時対応（よくある失敗の切り分け）
+- ドリフト検知（実環境との差分管理）
+
+---
+
+## 2. 前提条件
+
+### 必須
+
+- Terraform `>= 1.6.0`
+- Google provider `~> 5.0`（`versions.tf`）
+- `bootstrap` の適用完了
+
+### bootstrapから引き継ぐ値
+
+`bootstrap` の `terraform output` から次を取得し、`infra/terraform.tfvars` に設定します。
 
 - `github_actions_service_account_email`
 - `functions_runtime_service_account_email`
 - `workflow_runner_service_account_email`
+
+`backend` 初期化には以下も必要です。
+
 - `tfstate_bucket_name`
 
-`bootstrap` 未実施だと、SAメールや backend バケットが不足します。
+---
 
-## 初期化手順
+## 3. 何が作成されるか
 
-`backend "gcs" {}` は空定義なので、`init` 時に bucket/prefix を渡します。
+このモジュールは主に以下を作成・管理します。
+
+- GCSバケット: `input` / `temp` / `output` / `source`
+- Cloud Functions Gen2: `ocr-trigger` / `md-generator`
+- Document AI Processor（OCR）
+- Workflows: `docai-monitor`
+- Artifact Registry（Functions build artifact）
+- 必須API有効化（`apis.tf`）
+- 実行SAに対するバケット・SecretアクセスIAM
+- Firestore database（`create_firestore_database=true` の場合のみ）
+
+補足:
+- `md-generator` は **HTTP関数** として作成され、WorkflowsからOIDCで呼び出されます。
+- `ocr-trigger` は input バケット finalize イベントで起動されます。
+
+---
+
+## 4. 初回セットアップ（手動）
+
+### 4-1. backend初期化
+
+`backend "gcs" {}` は空定義です。`init` 時に bucket/prefix を渡します。
 
 ```bash
 cd infra
 terraform init -reconfigure \
-  -backend-config="bucket=<bootstrap の tfstate_bucket_name>" \
+  -backend-config="bucket=<bootstrapのtfstate_bucket_name>" \
   -backend-config="prefix=terraform/state/infra"
 ```
 
-## 変数設定
-
-`terraform.tfvars.example` をベースに `terraform.tfvars` を作成します。
+### 4-2. tfvars作成
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-最低限、次を実値に更新してください。
+最低限の更新項目:
 
 - `project_id`
 - `github_actions_service_account_email`
 - `functions_runtime_service_account_email`
 - `workflow_runner_service_account_email`
 
-## 適用
+### 4-3. 反映
 
 ```bash
-terraform plan -var-file=terraform.tfvars -out=tfplan
-terraform apply tfplan
+terraform validate
+terraform plan -lock-timeout=5m -var-file=terraform.tfvars -out=tfplan
+terraform apply -lock-timeout=5m tfplan
 ```
 
-## 主な動作
+---
 
-### 1) API 有効化
-`apis.tf` で以下を有効化します（抜粋）。
+## 5. 推奨運用フロー（本番）
 
-- `cloudfunctions.googleapis.com`
-- `run.googleapis.com`
-- `documentai.googleapis.com`
-- `aiplatform.googleapis.com`
-- `firestore.googleapis.com`
-- `workflows.googleapis.com`
+本番反映は GitHub Actions（`.github/workflows/terraform-infra.yml`）を正とする
 
-### 2) バケット作成
-`main.tf` の `random_id.bucket_suffix` で suffix を作り、以下を生成します。
+### 標準フロー
 
-- `<project>-input-<suffix>`
-- `<project>-temp-<suffix>`
-- `<project>-output-<suffix>`
-- `<project>-source-<suffix>`（`source_bucket_name` 未指定時）
+1. ブランチで変更
+2. PRで `plan` を確認
+3. `main` マージ後に `apply`
 
-### 3) Functions
-- `ocr-trigger`（GCS input finalize イベント）
-- `md-generator`（HTTP 専用、Workflows から OIDC 呼び出し）
+---
 
-### 4) Workflows
-`workflows/docai_monitor.yaml` で以下を実行します。
+## 6. 主要変数（運用で触る項目）
 
-1. Firestore ジョブを `DOC_AI_RUNNING` に更新
-2. Document AI operation をポーリング
-3. 成功/失敗を Firestore に反映
-4. 成功時に `md-generator` を HTTP POST で起動
-5. ステータスを `MD_TRIGGERED` に更新
+### パフォーマンス/安定性
 
-## 主要変数
+- `gemini_max_input_chars`（チャンクサイズ）
+- `gemini_read_timeout_sec`（Gemini read timeout）
+- `gemini_request_max_attempts`（Gemini retry回数）
+- `md_generator_timeout_seconds`（Function実行上限）
 
-- `documentai_location` : Document AI のリージョン（例: `us`）
-- `gemini_model_name` : Gemini API のモデル名（既定: `gemini-2.5-flash`）
-- `gemini_api_secret_id` : md-generator が参照する Secret Manager の secret id
-- `docai_submit_timeout_sec` : OCR submit タイムアウト秒
-- `ocr_firestore_timeout_sec` : ocr-trigger の Firestore timeout 秒
-- `workflow_execute_timeout_sec` : ocr-trigger の Workflows create_execution timeout 秒
-- `md_firestore_timeout_sec` : md-generator の Firestore timeout 秒
-- `gemini_timeout_sec` : Gemini リクエスト timeout 秒
-- `gcs_download_timeout_sec` / `gcs_upload_timeout_sec` / `gcs_exists_timeout_sec` : md-generator の GCS I/O timeout 秒
-- `gcs_download_max_attempts` / `gcs_download_base_sleep_sec` : md-generator の JSON ダウンロード再試行設定
-- `create_firestore_database` : infra 側で Firestore を作るか（既定 `false`）
+### スケーリング
 
-## 出力
+- `ocr_trigger_max_instance_count`
+- `md_generator_max_instance_count`
+- `*_max_instance_request_concurrency`
 
-適用後、以下を利用します。
+### タイムアウト（外部I/O）
 
-- `input_bucket_name`
-- `temp_bucket_name`
-- `output_bucket_name`
-- `source_bucket_name`
-- `documentai_processor_name`
-- `documentai_processor_id`
-- `ocr_trigger_function_uri`
-- `md_generator_function_uri`
-- `workflow_name`
-- `bucket_suffix`
+- `docai_submit_timeout_sec`
+- `workflow_execute_timeout_sec`
+- `gcs_download_timeout_sec` / `gcs_upload_timeout_sec`
+- `md_firestore_timeout_sec` / `ocr_firestore_timeout_sec`
 
-## 運用上の注意
+---
 
-- `google_storage_bucket_object.*_source` は**プレースホルダ**です。実コード zip は CI/CD で上書きする想定です。
-- `create_firestore_database=true` は、既存 Firestore があるプロジェクトでは失敗しやすいため通常 `false` 推奨です。
-- `source_bucket_name` を既存バケットにしたい場合のみ明示指定してください。
-- `md-generator` は Workflow 経由の HTTP 起動が前提です（直接イベントトリガーではありません）。
+## 7. Outputs（運用で使う値）
 
-## トラブルシュート
+```bash
+terraform output input_bucket_name
+terraform output output_bucket_name
+terraform output md_generator_function_uri
+terraform output workflow_name
+```
 
-- **`SERVICE_DISABLED firestore.googleapis.com`**
-  - API が未有効。`bootstrap` / `infra` の API有効化適用後、数分待って再実行。
+主な用途:
 
-- **`Policy update access denied`（project IAM更新）**
-  - 実行主体に `setIamPolicy` 権限が不足。高権限側（通常 bootstrap 実行主体）で IAM 付与を先に反映。
+- `input_bucket_name`: OCR入力ファイル投入先
+- `output_bucket_name`: Markdown出力確認先
+- `md_generator_function_uri`: HTTP到達性/認証確認
+- `workflow_name`: 実行状態追跡
 
-- **state bucket not found**
-  - `terraform init -reconfigure` の `bucket` が古い可能性。`bootstrap` の最新 `tfstate_bucket_name` を使って再初期化。
+---
+
+## 8. 安全に変更するための原則
+
+- `terraform apply` は必ず `plan` の結果を確認してから実行
+- `-target` は緊急時以外使わない（依存関係崩壊の原因）
+- 手動でGCPリソースを編集した場合は、必ず次回 `plan` でドリフト確認
+- Secret値（`GEMINI_API_KEY`）は tfvars に入れない（Secret Manager経由）
+
+---
+
+## 9. 変更失敗時の復旧方針
+
+### apply失敗時
+
+1. 同じ state/backend で `terraform plan` を再実行
+2. 失敗原因（権限/API未有効/依存順）を解消
+3. 再度 `apply`
+
+### 関数デプロイ不整合時
+
+- `source` バケットのZIP更新状態
+- Artifact Registry / Cloud Build API有効化
+- 実行SAへの権限
+
+を優先確認してください。
+
+---
+
+## 10. 参考ファイル
+
+- `infra/main.tf`（主要リソース）
+- `infra/apis.tf`（必須API）
+- `infra/variables.tf`（入力変数）
+- `infra/outputs.tf`（運用出力）
+- `infra/workflows/docai_monitor.yaml`（OCR監視ワークフロー）
