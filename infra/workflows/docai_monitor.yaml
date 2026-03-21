@@ -94,7 +94,7 @@ main:
             topic: $${md_generator_topic}
             body:
               messages:
-                - data: '$${base64.encode("{\"job_id\":\"" + job_id + "\"}")}'
+                - data: '$${base64.encode(text.encode("{\"job_id\":\"" + job_id + "\"}"))}'
                   attributes:
                     source: "docai_monitor"
                     job_id: $${job_id}
