@@ -101,12 +101,19 @@ main:
         except:
           as: publish_error
           steps:
-            - logPublishError:
-                # Firestore だけでなく Workflow ログにも原因を残す
-                call: sys.log
-                args:
-                  severity: "ERROR"
-                  data: $${"publishMdJob failed for job_id=" + job_id + " error=" + json.encode_to_string(publish_error)}
+            - logPublishErrorBestEffort:
+                # ログ書き込み権限不足で処理全体が失敗しないよう、ログはベストエフォートで実行する
+                try:
+                  call: sys.log
+                  args:
+                    severity: "ERROR"
+                    data: $${"publishMdJob failed for job_id=" + job_id + " error=" + json.encode_to_string(publish_error)}
+                except:
+                  as: log_error
+                  steps:
+                    - ignoreLogWriteError:
+                        assign:
+                          - _ignored_log_write_error: $${json.encode_to_string(log_error)}
             - markMdQueueFailed:
                 # Publish 失敗は MD_QUEUE_FAILED として記録
                 call: googleapis.firestore.v1.projects.databases.documents.patch
