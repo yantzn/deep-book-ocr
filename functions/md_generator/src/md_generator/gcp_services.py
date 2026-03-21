@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -18,27 +19,33 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_gs_uri(gs_uri: str) -> tuple[str, str]:
+    # gs://bucket/prefix 形式を bucket と prefix に分解する。
     if not gs_uri.startswith("gs://"):
         raise ValueError(f"Invalid gs:// URI: {gs_uri}")
 
     parsed = urlparse(gs_uri)
     bucket = parsed.netloc
     prefix = parsed.path.lstrip("/")
+
     if not bucket:
         raise ValueError(f"Invalid gs:// URI (missing bucket): {gs_uri}")
+
     return bucket, prefix
 
 
 class StorageService:
     def __init__(self, settings: Settings):
+        # Storage クライアントは設定済み project_id を使って生成する。
         self.settings = settings
         self.client = storage.Client(project=settings.gcp_project_id)
 
     def list_object_names(self, bucket_name: str, prefix: str) -> list[str]:
+        # prefix 配下のオブジェクト名を列挙し、処理順を安定化するためソートして返す。
         started = time.perf_counter()
         blobs = self.client.list_blobs(
             bucket_or_name=bucket_name, prefix=prefix)
         names = sorted(blob.name for blob in blobs)
+
         logger.info(
             "Listed objects from GCS: bucket=%s prefix=%s object_count=%d elapsed_ms=%d",
             bucket_name,
@@ -60,6 +67,7 @@ class StorageService:
         max_attempts: int,
         base_sleep_sec: float,
     ) -> str:
+        # 一時的なAPIエラー/NotFound遅延を想定し、段階的バックオフで再試行する。
         bucket = self.client.bucket(bucket_name)
         blob = bucket.blob(object_name)
 
@@ -74,6 +82,7 @@ class StorageService:
                     f"GCS object download forbidden: gs://{bucket_name}/{object_name}"
                 ) from e
             except NotFound as e:
+                # OCR直後は整合遅延で見えないことがあるため、規定回数までは再試行する。
                 if attempt >= max_attempts:
                     raise RuntimeError(
                         f"GCS object not found after retries: gs://{bucket_name}/{object_name}"
@@ -90,30 +99,68 @@ class StorageService:
             f"GCS object download failed after retries: gs://{bucket_name}/{object_name}"
         )
 
+    def _download_one_json(
+        self,
+        bucket_name: str,
+        object_name: str,
+    ) -> dict[str, Any]:
+        # 1ファイル分のダウンロード + JSONパースを担当する最小単位処理。
+        raw = self._download_text_with_retry(
+            bucket_name=bucket_name,
+            object_name=object_name,
+            max_attempts=self.settings.gcs_download_max_attempts,
+            base_sleep_sec=self.settings.gcs_download_base_sleep_sec,
+        )
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"Invalid JSON content in gs://{bucket_name}/{object_name}: {e}"
+            ) from e
+
     def download_json_documents_from_gs_uri_prefix(self, gs_uri_prefix: str) -> list[dict[str, Any]]:
+        # prefix 配下の JSON を並列ダウンロードし、Document AI 断片を一括返却する。
+        started = time.perf_counter()
+
         bucket_name, prefix = _parse_gs_uri(gs_uri_prefix)
         object_names = self.list_object_names(bucket_name, prefix)
         json_object_names = [
             name for name in object_names if name.endswith(".json")]
 
-        docs: list[dict[str, Any]] = []
-        for object_name in json_object_names:
-            raw = self._download_text_with_retry(
-                bucket_name=bucket_name,
-                object_name=object_name,
-                max_attempts=self.settings.gcs_download_max_attempts,
-                base_sleep_sec=self.settings.gcs_download_base_sleep_sec,
-            )
-            try:
-                docs.append(json.loads(raw))
-            except json.JSONDecodeError as e:
-                raise RuntimeError(
-                    f"Invalid JSON content in gs://{bucket_name}/{object_name}: {e}"
-                ) from e
+        if not json_object_names:
+            return []
 
+        worker_count = max(
+            1,
+            min(
+                # 並列数は設定値と対象件数の小さい方を採用し、過剰並列を防ぐ。
+                int(self.settings.gcs_parallel_download_workers),
+                len(json_object_names),
+            ),
+        )
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            docs = list(
+                executor.map(
+                    lambda object_name: self._download_one_json(
+                        bucket_name, object_name),
+                    json_object_names,
+                )
+            )
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "Downloaded OCR JSON documents from GCS: bucket=%s prefix=%s json_count=%d workers=%d elapsed_ms=%d",
+            bucket_name,
+            prefix,
+            len(docs),
+            worker_count,
+            elapsed_ms,
+        )
         return docs
 
     def write_markdown(self, bucket_name: str, object_name: str, markdown: str) -> str:
+        # 生成Markdownを text/markdown で保存し、後続で参照しやすい gs:// URI を返す。
         bucket = self.client.bucket(bucket_name)
         blob = bucket.blob(object_name)
         blob.upload_from_string(
@@ -130,12 +177,12 @@ class StorageService:
 
 class LLMService:
     def __init__(self, settings: Settings):
+        # セッション再利用により接続コストを削減する。
         self.settings = settings
         self._session = requests.Session()
 
     @dataclass(frozen=True)
     class _GeminiResponse:
-        # Gemini API応答から、後段の観測ログで使う値のみ抽出した中間表現。
         text: str
         latency_ms: int
         prompt_tokens: int | None
@@ -143,7 +190,7 @@ class LLMService:
         total_tokens: int | None
 
     def _generate_via_gemini_api(self, prompt: str) -> _GeminiResponse:
-        """Gemini APIへ1回リクエストし、本文と使用量メタデータを返す。"""
+        # APIキー未設定時は呼び出しをスキップし、上位でドラフトをそのまま使わせる。
         if not self.settings.gemini_api_key.strip():
             logger.warning("GEMINI_API_KEY is not set; using draft markdown")
             return self._GeminiResponse(
@@ -158,7 +205,9 @@ class LLMService:
             f"{self.settings.gemini_api_base_url.rstrip('/')}"
             f"/models/{self.settings.gemini_model_name}:generateContent"
         )
+
         payload = {
+            # 生成は「ユーザー入力1件」を前提とした最小構成。
             "contents": [
                 {
                     "role": "user",
@@ -166,6 +215,7 @@ class LLMService:
                 }
             ],
             "generationConfig": {
+                # 再現性重視のため低温度で出力揺れを抑える。
                 "temperature": 0.2,
             },
         }
@@ -173,16 +223,18 @@ class LLMService:
         max_attempts = max(1, int(self.settings.gemini_request_max_attempts))
         base_sleep_sec = max(0.0, float(
             self.settings.gemini_retry_base_sleep_sec))
-        connect_timeout_sec = max(
-            0.1, float(self.settings.gemini_connect_timeout_sec))
+        connect_timeout_sec = max(0.1, float(
+            self.settings.gemini_connect_timeout_sec))
         read_timeout_sec = max(0.1, float(
             self.settings.gemini_read_timeout_sec))
+
         started = time.perf_counter()
         response: requests.Response | None = None
         last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
             try:
+                # connect/read を分離して timeout を明示管理する。
                 response = self._session.post(
                     endpoint,
                     headers={
@@ -198,15 +250,20 @@ class LLMService:
             except requests.HTTPError as e:
                 last_error = e
                 status_code = getattr(e.response, "status_code", None)
+                # 5xx は一時障害として再試行、4xx は基本的に即失敗。
                 is_retryable = status_code is not None and status_code >= 500
+
                 if attempt >= max_attempts or not is_retryable:
                     body = ""
                     if e.response is not None:
                         body = e.response.text[:500]
                     latency_ms = int((time.perf_counter() - started) * 1000)
                     raise RuntimeError(
-                        f"Gemini API request failed: status={getattr(e.response, 'status_code', 'unknown')} latency_ms={latency_ms} body={body}"
+                        "Gemini API request failed: "
+                        f"status={getattr(e.response, 'status_code', 'unknown')} "
+                        f"latency_ms={latency_ms} body={body}"
                     ) from e
+
                 sleep_sec = base_sleep_sec * attempt
                 logger.warning(
                     "Gemini HTTP error (retrying): attempt=%d/%d status=%s sleep_sec=%.2f",
@@ -223,6 +280,7 @@ class LLMService:
                     raise RuntimeError(
                         f"Gemini API request failed: latency_ms={latency_ms} error={e!r}"
                     ) from e
+
                 sleep_sec = base_sleep_sec * attempt
                 logger.warning(
                     "Gemini request exception (retrying): attempt=%d/%d sleep_sec=%.2f error=%r",
@@ -240,8 +298,10 @@ class LLMService:
             )
 
         data = response.json()
+        # Gemini の候補レスポンスから text パーツのみを連結する。
         candidates = data.get("candidates") or []
         texts: list[str] = []
+
         for candidate in candidates:
             content = candidate.get("content") or {}
             for part in content.get("parts") or []:
@@ -259,7 +319,7 @@ class LLMService:
         )
 
     def _split_markdown_chunks(self, markdown: str) -> list[str]:
-        """Markdownを段落優先で分割し、チャンク上限文字数内へ収める。"""
+        # Gemini 入力上限を守るため、段落優先でチャンク分割する。
         max_chars = max(1, int(self.settings.gemini_max_input_chars))
         paragraphs = markdown.split("\n\n")
 
@@ -284,7 +344,6 @@ class LLMService:
             next_len = current_chars + separator + para_len
 
             if next_len <= max_chars:
-                # 現在のチャンクに段落を追加できる場合はそのまま積む。
                 current_parts.append(para)
                 current_chars = next_len
                 continue
@@ -292,14 +351,13 @@ class LLMService:
             flush_current()
 
             if para_len <= max_chars:
-                # 現在チャンクを確定後、段落を次チャンクの先頭として採用する。
                 current_parts.append(para)
                 current_chars = para_len
                 continue
 
-            # 単一段落が上限超過するケースのみ、段落内で強制スライスする。
+            # 単一段落が上限超過する場合は機械的にスライス分割する。
             for i in range(0, para_len, max_chars):
-                piece = para[i:i + max_chars].strip()
+                piece = para[i: i + max_chars].strip()
                 if piece:
                     chunks.append(piece)
 
@@ -307,8 +365,7 @@ class LLMService:
         return chunks or [markdown[:max_chars]]
 
     def polish_markdown(self, draft_markdown: str) -> str:
-        """下書きMarkdownをチャンク単位でGemini整形し、結合して返す。"""
-        # 長文タイムアウト回避のため、まず入力をチャンクへ分割する。
+        # チャンク単位でGemini整形し、失敗チャンクはドラフトを採用して処理継続する。
         chunks = self._split_markdown_chunks(draft_markdown)
         chunk_outputs: list[str] = []
         failures = 0
@@ -341,12 +398,12 @@ STRUCTURE
 TECHNICAL BOOK HANDLING
 - Detect code, CLI commands, config files, and logs; wrap them in fenced code blocks.
 - Infer the most likely language for the fence (e.g., python, bash, json, yaml, sql, text).
-- Preserve code and symbols exactly when possible (punctuation, brackets, quotes, backticks).
+- Preserve code and symbols exactly when possible.
 - For tables, use Markdown tables if clearly tabular; otherwise keep as preformatted text.
 
 SELF-DEVELOPMENT / NONFICTION HANDLING
 - Preserve quotes and emphasized sentences.
-- If the author clearly highlights a “key takeaway”, keep it prominent using bold or blockquotes.
+- If the author clearly highlights a key takeaway, keep it prominent using bold or blockquotes.
 - Do not add interpretations or commentary.
 
 OUTPUT
@@ -356,7 +413,8 @@ OUTPUT
 
 OCR TEXT:
 {chunk}
-"""
+""".strip()
+
             chunk_failed = False
             prompt_tokens: int | None = None
             response_tokens: int | None = None
@@ -370,13 +428,12 @@ OCR TEXT:
                 prompt_tokens = result.prompt_tokens
                 response_tokens = result.response_tokens
                 total_tokens = result.total_tokens
+
                 if not polished_chunk:
-                    # 空応答は失敗扱いにし、元チャンクを採用して欠落を防ぐ。
                     chunk_failed = True
                     failures += 1
                     polished_chunk = chunk
             except RuntimeError as e:
-                # APIエラー時も同様にフォールバックし、パイプラインを継続する。
                 chunk_failed = True
                 failures += 1
                 polished_chunk = chunk
@@ -388,7 +445,7 @@ OCR TEXT:
                 )
 
             fail_rate = failures / chunk_index
-            # チャンク粒度で遅延・トークン・失敗率を記録し、運用で調整可能にする。
+
             log_pipeline_event(
                 logger,
                 level=logging.INFO,
@@ -405,12 +462,12 @@ OCR TEXT:
                 chunk_failed=chunk_failed,
                 fail_rate=round(fail_rate, 4),
             )
+
             chunk_outputs.append(polished_chunk)
 
-        # チャンク順に再結合し、文書全体の最終Markdownを組み立てる。
         combined = "\n\n".join(part.strip()
                                for part in chunk_outputs if part.strip()).strip()
-        # 最終サマリを1件出力し、処理全体の成功率を追跡しやすくする。
+
         log_pipeline_event(
             logger,
             level=logging.INFO,
@@ -424,22 +481,22 @@ OCR TEXT:
         )
 
         if not combined:
+            # 全チャンク空応答の場合は内容消失を避けるためドラフトを返す。
             logger.warning(
                 "Gemini returned empty text across all chunks; using draft markdown")
             return draft_markdown
+
         return combined
 
 
 @dataclass(frozen=True)
 class Services:
-    # エントリーポイント側が依存を1つの束として受け取れるようにする。
     storage_service: StorageService
     llm_service: LLMService
 
 
 def build_services(settings: Settings) -> Services:
-    """利用する外部サービス依存を組み立てて返す。"""
-    # 外部サービス依存の生成を1箇所に集約し、テスト時の差し替えを容易にする。
+    # main.py から利用する依存を束ねて返す。
     return Services(
         storage_service=StorageService(settings),
         llm_service=LLMService(settings),
