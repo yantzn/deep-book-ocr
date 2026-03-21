@@ -215,13 +215,6 @@ resource "google_storage_bucket_iam_member" "workflow_output_admin" {
   member = local.workflow_sa_member
 }
 
-resource "google_project_iam_member" "workflow_log_writer" {
-  # Workflow の sys.log で Cloud Logging へ出力するための権限。
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = local.workflow_sa_member
-}
-
 #
 # IAM for Document AI service agent
 # input read / temp write
@@ -376,7 +369,6 @@ resource "google_workflows_workflow" "docai_monitor" {
     google_project_service_identity.workflows_service_agent,
     google_cloudfunctions2_function.md_generator,
     google_pubsub_topic_iam_member.workflow_md_generator_publisher,
-    google_project_iam_member.workflow_log_writer,
   ]
 }
 
