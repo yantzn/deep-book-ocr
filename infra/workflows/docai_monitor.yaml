@@ -98,6 +98,14 @@ main:
                   attributes:
                     source: "docai_monitor"
                     job_id: $${job_id}
+          retry:
+            # 一時的な API/ネットワーク障害は再試行して吸収する
+            predicate: $${http.default_retry_predicate}
+            max_retries: 3
+            backoff:
+              initial_delay: 1
+              max_delay: 10
+              multiplier: 2
         except:
           as: publish_error
           steps:
@@ -128,7 +136,11 @@ main:
                       last_error:
                         stringValue: $${json.encode_to_string(publish_error)}
             - finishQueueFailed:
-                return: "MD_QUEUE_FAILED"
+                return:
+                  status: "MD_QUEUE_FAILED"
+                  job_id: $${job_id}
+                  topic: $${md_generator_topic}
+                  publish_error: $${publish_error}
         next: markMdQueued
 
     - markMdQueued:
