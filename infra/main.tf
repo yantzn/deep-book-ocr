@@ -375,8 +375,9 @@ resource "google_workflows_workflow" "docai_monitor" {
 # md-generator を過去構成から安全に切り替えるための one-time trigger
 resource "terraform_data" "md_generator_http_migration" {
   # lifecycle.replace_triggered_by 用のダミーリソース。
-  # 値を更新すると md-generator を意図的に再作成できる。
-  input = "v2"
+  # HTTP -> Pub/Sub トリガー移行は in-place update 不可のため、
+  # 値を更新して md-generator を明示的に再作成させる。
+  input = "v3"
 }
 
 #
