@@ -67,8 +67,8 @@ Markdown
 | Component | Role |
 | --- | --- |
 | ocr-trigger | GCSイベントを受けてDocument AI OCRを開始 |
-| docai-monitor | OCR完了までポーリングし、完了後に次処理へ遷移 |
-| md-generator | OCR JSONからMarkdownを生成（必要に応じGeminiで整形） |
+| docai-monitor | OCR完了までポーリングし、完了後に Pub/Sub へ MD ジョブを投入 |
+| md-generator | Pub/Sub ジョブを受けてMarkdownを生成（必要に応じGeminiで整形） |
 
 ---
 

@@ -164,8 +164,9 @@ resource "google_storage_bucket_iam_member" "runtime_input_viewer" {
 }
 
 resource "google_storage_bucket_iam_member" "runtime_temp_viewer" {
+  # md-generator が temp 配下JSONを読み取り・削除できるよう objectUser を付与する。
   bucket = google_storage_bucket.buckets["temp"].name
-  role   = "roles/storage.objectViewer"
+  role   = "roles/storage.objectUser"
   member = local.runtime_sa_member
 }
 
