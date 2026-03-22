@@ -180,6 +180,7 @@ def generate_markdown(event: CloudEvent) -> None:
         # 2) Firestoreからジョブ情報を取得し、入力/出力に必要な識別子を読み出す。
         job = job_store.get_job(job_id)
         temp_output_prefix = str(job["temp_output_prefix"])
+        input_bucket = str(job["input_bucket"])
         input_name = str(job["input_name"])
         input_generation = str(job["input_generation"])
 
@@ -304,6 +305,62 @@ def generate_markdown(event: CloudEvent) -> None:
             output_uri=output_uri,
             elapsed_ms=_elapsed_ms(upload_started),
         )
+
+        # 6) MD 生成後、DocAI の中間JSONを削除する（失敗してもジョブは成功扱いを維持）。
+        cleanup_started = time.perf_counter()
+        try:
+            deleted_count = storage_service.delete_objects_from_gs_uri_prefix(
+                temp_output_prefix
+            )
+            _log_event(
+                level=logging.INFO,
+                stage="temp_json_cleanup_succeeded",
+                request_id=request_id,
+                trace_id=trace_id,
+                job_id=job_id,
+                deleted_count=deleted_count,
+                prefix=temp_output_prefix,
+                elapsed_ms=_elapsed_ms(cleanup_started),
+            )
+        except Exception as cleanup_error:  # noqa: BLE001
+            _log_event(
+                level=logging.WARNING,
+                stage="temp_json_cleanup_failed",
+                request_id=request_id,
+                trace_id=trace_id,
+                job_id=job_id,
+                prefix=temp_output_prefix,
+                error=_short_text(cleanup_error),
+                elapsed_ms=_elapsed_ms(cleanup_started),
+            )
+
+        # 7) 入力PDFも削除する（失敗してもジョブは成功扱いを維持）。
+        input_cleanup_started = time.perf_counter()
+        try:
+            storage_service.delete_object(
+                bucket_name=input_bucket,
+                object_name=input_name,
+            )
+            _log_event(
+                level=logging.INFO,
+                stage="input_pdf_cleanup_succeeded",
+                request_id=request_id,
+                trace_id=trace_id,
+                job_id=job_id,
+                input_uri=f"gs://{input_bucket}/{input_name}",
+                elapsed_ms=_elapsed_ms(input_cleanup_started),
+            )
+        except Exception as input_cleanup_error:  # noqa: BLE001
+            _log_event(
+                level=logging.WARNING,
+                stage="input_pdf_cleanup_failed",
+                request_id=request_id,
+                trace_id=trace_id,
+                job_id=job_id,
+                input_uri=f"gs://{input_bucket}/{input_name}",
+                error=_short_text(input_cleanup_error),
+                elapsed_ms=_elapsed_ms(input_cleanup_started),
+            )
 
         job_store.update_fields(
             job_id,

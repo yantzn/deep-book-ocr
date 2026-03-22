@@ -59,6 +59,30 @@ class StorageService:
         bucket, prefix = _parse_gs_uri(gs_uri_prefix)
         return self.list_object_names(bucket_name=bucket, prefix=prefix)
 
+    def delete_object(self, bucket_name: str, object_name: str) -> None:
+        # 単一オブジェクト削除。存在しない場合はエラーとせず処理継続する。
+        blob = self.client.bucket(bucket_name).blob(object_name)
+        blob.delete(timeout=self.settings.gcs_upload_timeout_sec)
+
+    def delete_objects_from_gs_uri_prefix(self, gs_uri_prefix: str) -> int:
+        # prefix 配下オブジェクトを順次削除し、削除件数を返す。
+        bucket_name, prefix = _parse_gs_uri(gs_uri_prefix)
+        object_names = self.list_object_names(bucket_name, prefix)
+
+        deleted_count = 0
+        for object_name in object_names:
+            blob = self.client.bucket(bucket_name).blob(object_name)
+            blob.delete(timeout=self.settings.gcs_upload_timeout_sec)
+            deleted_count += 1
+
+        logger.info(
+            "Deleted objects from GCS: bucket=%s prefix=%s deleted_count=%d",
+            bucket_name,
+            prefix,
+            deleted_count,
+        )
+        return deleted_count
+
     def _download_text_with_retry(
         self,
         bucket_name: str,

@@ -164,22 +164,17 @@ main:
         result: job_doc
 
     - normalizeJobAfterMd:
-        # null 安全にステータス/削除対象オブジェクト情報を取り出す
+        # null 安全にステータスを取り出す
         assign:
           - job_fields: $${map.get(job_doc, "fields")}
           - status_field: $${if(job_fields == null, null, map.get(job_fields, "status"))}
-          - input_bucket_field: $${if(job_fields == null, null, map.get(job_fields, "input_bucket"))}
-          - input_name_field: $${if(job_fields == null, null, map.get(job_fields, "input_name"))}
           - md_status: $${default(map.get(status_field, "stringValue"), "")}
-          - input_bucket: $${default(map.get(input_bucket_field, "stringValue"), "")}
-          - input_name: $${default(map.get(input_name_field, "stringValue"), "")}
-          - temp_json_prefix: $${input_name + "_json/"}
 
     - checkMdDone:
-        # 成功時のみ削除処理を実行。失敗時は調査用に入力/JSONを残す
+        # 成功時の入力PDF/Temp JSON削除は md-generator 実装側で実施する
         switch:
           - condition: $${md_status == "MD_SUCCEEDED"}
-            next: deleteInputObject
+            next: finishOk
           - condition: $${md_status == "MD_FAILED"}
             next: finishFailed
           - condition: $${md_poll_count >= md_poll_max}
