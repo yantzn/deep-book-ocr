@@ -7,7 +7,7 @@
 ## 1. 構成
 
 - `ocr-trigger/`: GCS input イベント起動 → Document AI OCR 投入
-- `md-generator/`: HTTP 関数 → OCR JSON 集約 + Markdown 生成 + Gemini 整形
+- `md-generator/`: Pub/Sub トリガー関数 → OCR JSON 集約 + Markdown 生成 + Gemini 整形
 
 ---
 

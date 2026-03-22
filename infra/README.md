@@ -52,7 +52,7 @@
 - Firestore database（`create_firestore_database=true` の場合のみ）
 
 補足:
-- `md-generator` は **HTTP関数** として作成され、WorkflowsからOIDCで呼び出されます。
+- `md-generator` は **Pub/Subトリガー関数** として作成され、`docai-monitor` からトピック publish で非同期起動されます。
 - `ocr-trigger` は input バケット finalize イベントで起動されます。
 
 ---
@@ -134,7 +134,6 @@ terraform apply -lock-timeout=5m tfplan
 ```bash
 terraform output input_bucket_name
 terraform output output_bucket_name
-terraform output md_generator_function_uri
 terraform output workflow_name
 ```
 
@@ -142,8 +141,10 @@ terraform output workflow_name
 
 - `input_bucket_name`: OCR入力ファイル投入先
 - `output_bucket_name`: Markdown出力確認先
-- `md_generator_function_uri`: HTTP到達性/認証確認
 - `workflow_name`: 実行状態追跡
+
+補足:
+- MD成功時の input PDF / temp JSON 削除は `md-generator` 実装側で実施します（Workflow側では削除しません）。
 
 ---
 
